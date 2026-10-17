@@ -4,6 +4,12 @@
 外部ライブラリや外部リソースは一切使わず、生の WebGL と Web Audio だけで動くため、
 オフラインでも `index3.html` を開くだけで遊べます。
 
+## ▶ ブラウザで遊ぶ
+
+**[https://masawo2024.github.io/space-invaders-3d/index3.html](https://masawo2024.github.io/space-invaders-3d/index3.html)**
+
+上のリンクを開くとそのまま遊べます（GitHub Pages で公開中）。スマートフォンのブラウザでも動きます。
+
 ## 特徴
 
 - **視点切替**: 正面 / 俯瞰 / 斜め / 周回 / 追尾 の 5 モード
@@ -43,7 +49,8 @@
 
 ## 実行
 
-`index3.html` をブラウザで開くだけです。ローカルファイル(`file://`)でも動作し、サーバは不要です。
+1. **オンライン**: [https://masawo2024.github.io/space-invaders-3d/index3.html](https://masawo2024.github.io/space-invaders-3d/index3.html) を開く
+2. **ローカル**: `index3.html` をブラウザで開くだけ（`file://` でも動作し、サーバは不要です）
 
 ## メモ
 
