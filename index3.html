@@ -1,0 +1,2088 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>SPACE INVADERS 3D</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    background:#03040a;
+    background-image:radial-gradient(ellipse at 50% 35%, #0c1430 0%, #03040a 72%);
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+    font-family:"Courier New", ui-monospace, monospace;
+    color:#e8ecff;
+    touch-action:none;              /* スクロール/ピンチズーム/ダブルタップ拡大を止める */
+    overscroll-behavior:none;
+    user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  /* ---------- ステージ (ゲーム画面 + オーバーレイ) ---------- */
+  #stage {
+    position:relative;
+    /* dvh 非対応ブラウザ用に vh で先に指定 (後段の dvh が有効なら上書きされる) */
+    width:min(100vw, calc(100vh * 560 / 720));
+    height:min(100vh, calc(100vw * 720 / 560));
+    width:min(100vw, calc(100dvh * 560 / 720));
+    height:min(100dvh, calc(100vw * 720 / 560));
+    font-size:16px;                 /* JS でステージ幅に応じて更新 */
+    overflow:hidden;
+    border-radius:4px;
+    box-shadow:0 0 70px rgba(70,120,255,.20);
+    background:#03040a;
+  }
+  #gl { display:block; width:100%; height:100%; touch-action:none; cursor:grab; }
+  #gl.dragging { cursor:grabbing; }
+
+  #flash { position:absolute; inset:0; background:#ff3b3b; opacity:0; pointer-events:none; }
+
+  /* ---------- HUD ---------- */
+  #hud { position:absolute; inset:0; pointer-events:none; }
+  #hud .top { display:flex; justify-content:space-between; padding:1.1em 1.2em 0; }
+  #hud .cell { display:flex; flex-direction:column; gap:.25em; }
+  #hud .cell.mid { align-items:center; }
+  #hud .cell.right { align-items:flex-end; }
+  #hud .lbl { font-size:.72em; letter-spacing:.18em; color:#cfd8f5; }
+  #hud .val { font-size:1.15em; font-weight:bold; letter-spacing:.08em; }
+  #hScore { color:#63e6ff; } #hHi { color:#ffd166; } #hWave { color:#c792ea; }
+  #hud .bottom { position:absolute; left:1.2em; bottom:1.0em; display:flex; gap:.35em; align-items:flex-end; }
+  #hud .life { font-size:1.05em; color:#7ee787; text-shadow:0 0 8px rgba(126,231,135,.7); }
+  #hud .mute { position:absolute; right:1.2em; top:5.4em; font-size:.7em; color:#66708a; letter-spacing:.1em; }
+
+  /* ---------- カメラ切替バー ---------- */
+  #cambar {
+    position:absolute; left:0; right:0; bottom:0;
+    display:flex; justify-content:center; align-items:center; gap:.35em;
+    padding:.5em; pointer-events:none;
+  }
+  #cambar .btns { display:flex; gap:.3em; background:rgba(8,12,28,.62); border:1px solid #1e2a4d;
+    border-radius:9px; padding:.25em; pointer-events:auto; backdrop-filter:blur(3px); }
+  #cambar button {
+    font-family:inherit; font-size:.72em; font-weight:bold;
+    color:#8fa2cc; background:transparent; border:1px solid transparent;
+    border-radius:6px; padding:.35em .55em; cursor:pointer; white-space:nowrap;
+    transition:background .12s, color .12s;
+  }
+  #cambar button:hover { color:#dbe6ff; }
+  #cambar button.on { background:#1d2a55; border-color:#3b53a0; color:#9fd0ff; }
+  #camName { pointer-events:none; margin-left:.45em; font-size:.7em; color:#7f8dbb; letter-spacing:.12em; }
+
+  /* ---------- オーバーレイ ---------- */
+  #ovl {
+    position:absolute; inset:0; display:none;
+    flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; gap:.55em; padding:1em;
+    background:rgba(3,4,10,.62); backdrop-filter:blur(2px);
+    pointer-events:none;
+  }
+  #ovl.show { display:flex; }
+  #ovl .big { font-size:2.6em; font-weight:bold; letter-spacing:.08em; line-height:1.15; }
+  #ovl .mid2 { font-size:1.25em; font-weight:bold; letter-spacing:.1em; }
+  #ovl .sm { font-size:.8em; letter-spacing:.14em; color:#9aa8cc; }
+  #ovl .blink { animation:bk 1.05s steps(1,end) infinite; }
+  @keyframes bk { 0%,55%{opacity:1} 56%,100%{opacity:0} }
+  /* ウェーブクリア演出: ポップイン + 背景を抜いて花火を見せる */
+  #ovl .pop { animation:popin .55s cubic-bezier(.18,1.8,.42,1) both; }
+  @keyframes popin { 0%{transform:scale(.22);opacity:0} 55%{opacity:1} 100%{transform:scale(1);opacity:1} }
+  #ovl .huge { font-size:3.05em; font-weight:bold; letter-spacing:.1em; line-height:1.15;
+    text-shadow:0 0 20px rgba(126,231,135,.9), 0 0 48px rgba(99,230,255,.55), 0 4px 16px #000; }
+  #ovl.clear { background:transparent; backdrop-filter:none; }
+  #ovl.clear .sm { color:#dbe7ff; text-shadow:0 0 12px #000, 0 0 4px #000; }
+  #ovl.ready { background:rgba(3,4,10,.30); backdrop-filter:none;
+    text-shadow:0 0 14px #000, 0 0 4px #000; }
+  /* 放置デモ (オートプレイ) 中: 背景を抜いて、再開案内だけを下端に出す */
+  #ovl.demo { background:transparent; backdrop-filter:none; gap:0;
+    justify-content:flex-end; padding-bottom:4.6em;
+    text-shadow:0 0 14px #000, 0 0 4px #000; }
+  #ovl .pts { display:grid; grid-template-columns:auto auto; gap:.5em 1.1em;
+    font-size:.82em; margin-top:.6em; align-items:center; }
+  #ovl .pts .k { text-align:left; color:#dfe6ff; letter-spacing:.08em; }
+  /* スコア表のキャラ: 実際のスプライトを色付きで表示 (--spr-* は JS が用意する) */
+  #ovl .pts .sw { width:2.9em; height:1.45em;
+    background-repeat:no-repeat; background-position:center; background-size:contain;
+    image-rendering:pixelated; }
+  .t-squid{background-image:var(--spr-squid)} .t-crab{background-image:var(--spr-crab)}
+  .t-octo{background-image:var(--spr-octo)}   .t-ufo{background-image:var(--spr-ufo)}
+  .l-green{color:#7ee787} .l-blue{color:#63e6ff} .l-gold{color:#ffd166}
+  .l-red{color:#ff6b6b} .l-purple{color:#c792ea} .l-white{color:#ffffff}
+
+  /* ---------- タッチパッド ---------- */
+  :root { --padh:96px; }                       /* パッドが使う高さ */
+  #pad {
+    position:fixed; left:0; right:0; bottom:0; z-index:20;
+    display:none; gap:1em; justify-content:center; align-items:center;
+    padding:.6em .7em calc(.6em + env(safe-area-inset-bottom));
+    pointer-events:none;                       /* 隙間はステージ操作を通す */
+  }
+  #pad .pg { display:flex; gap:.5em; }
+  #pad button {
+    font-family:inherit; font-weight:bold; font-size:19px;
+    color:#7ee787; background:rgba(18,23,46,.92); border:1px solid #2b3a66;
+    border-radius:12px; height:58px; min-width:54px;
+    user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+    touch-action:none; cursor:pointer; pointer-events:auto;
+  }
+  #pad button:active, #pad button.on { background:#1c2450; color:#b8ffc6; }
+  #pad #bf { min-width:86px; max-width:130px; flex:1 1 auto; font-size:15px; color:#ffd166; letter-spacing:2px; }
+  #pad #bp, #pad #bc { min-width:54px; font-size:14px; color:#8ab4ff; }
+  @media (max-width:375px) {                   /* 狭い端末ではボタンを縮めて1列に収める */
+    #pad { gap:.5em; padding:.5em .5em calc(.5em + env(safe-area-inset-bottom)); }
+    #pad button { height:52px; min-width:46px; font-size:17px; }
+    #pad #bf { min-width:72px; font-size:13px; }
+    #pad #bp, #pad #bc { min-width:46px; font-size:12px; }
+  }
+
+  /* タッチ端末 (JS が body に .touch を付ける): パッドを出し、その分だけステージを縮める */
+  body.touch { padding-bottom:calc(var(--padh) + env(safe-area-inset-bottom)); }
+  body.touch #pad { display:flex; }
+  body.touch #stage {
+    width:min(100vw, calc((100vh - var(--padh) - env(safe-area-inset-bottom)) * 560 / 720));
+    height:min(calc(100vh - var(--padh) - env(safe-area-inset-bottom)), calc(100vw * 720 / 560));
+    width:min(100vw, calc((100dvh - var(--padh) - env(safe-area-inset-bottom)) * 560 / 720));
+    height:min(calc(100dvh - var(--padh) - env(safe-area-inset-bottom)), calc(100vw * 720 / 560));
+  }
+
+  /* 横向き: ボタンを左右の余白へ回し、ステージは画面の高さいっぱいを使う */
+  @media (orientation:landscape) {
+    body.touch { padding-bottom:0; }
+    body.touch #pad {
+      top:0; bottom:0; justify-content:space-between;
+      padding:.6em 1em;
+      padding-left:calc(1em + env(safe-area-inset-left));      /* 横向きのノッチ/ホームバー避け */
+      padding-right:calc(1em + env(safe-area-inset-right));
+    }
+    body.touch #stage {
+      width:min(100vw, calc(100vh * 560 / 720));
+      height:min(100vh, calc(100vw * 720 / 560));
+      width:min(100vw, calc(100dvh * 560 / 720));
+      height:min(100dvh, calc(100vw * 720 / 560));
+    }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="gl"></canvas>
+  <div id="flash"></div>
+
+  <div id="hud">
+    <div class="top">
+      <div class="cell"><span class="lbl">SCORE</span><span class="val" id="hScore">00000</span></div>
+      <div class="cell mid"><span class="lbl">HI-SCORE</span><span class="val" id="hHi">00000</span></div>
+      <div class="cell right"><span class="lbl">WAVE</span><span class="val" id="hWave">01</span></div>
+    </div>
+    <div class="bottom" id="hLives"></div>
+    <div class="mute" id="hMute"></div>
+  </div>
+
+  <div id="cambar">
+    <div class="btns" id="camBtns"></div>
+    <span id="camName"></span>
+  </div>
+
+  <div id="ovl"></div>
+</div>
+
+<div id="pad">
+  <div class="pg">
+    <button id="bl">&#9664;</button>
+    <button id="br">&#9654;</button>
+  </div>
+  <div class="pg">
+    <button id="bc">CAM</button>
+    <button id="bp">II</button>
+    <button id="bf">FIRE</button>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ============================================================
+   SPACE INVADERS 3D  -  single file / raw WebGL (no libraries)
+   ============================================================ */
+
+// ===================== 基本定数 =====================
+const W = 560, H = 720;          // 2D 論理解像度 (ゲームロジック座標)
+const S = 0.05;                  // 1px -> world unit
+const toX = x => (x - W / 2) * S;
+const toY = y => (H / 2 - y) * S;
+
+const CELL_W = 40, CELL_H = 42, COLS = 11, ROWS = 5;
+const GRID_LEFT = (W - COLS * CELL_W) / 2;   // 60
+const GRID_TOP = 100;
+const FIELD_PAD = 16, STEP_X = 6, DROP_Y = 24;
+
+const PLAYER_W = 13 * 3, PLAYER_H = 8 * 3;
+const PLAYER_Y = 636, PLAYER_SPEED = 270, GROUND_Y = 680;
+
+const BLOCK = 3, BCOLS = 22, BROWS = 16;
+const BUNKER_W = BCOLS * BLOCK, BUNKER_H = BROWS * BLOCK, BUNKER_Y = 530;
+
+const BULLET_SPEED = 620, MAX_BOMBS = 3;
+const INV_DEPTH = 0.18;                       // 敵の厚み (原作の平面ピクセル絵に寄せる)
+
+// ゲーム面は「上へ行くほど奥」に傾いた1枚の平面。
+// 自機・敵・自弾・敵弾・爆発まで、すべて同じ平面 z = zOf(y) 上に載るので、
+// 2Dの当たり判定と見た目の奥行きが常に一致する。
+const Z_TILT   = 0.010;
+const Z_BASE_Y = PLAYER_Y + PLAYER_H / 2;     // 自機の中心を z = 0 とする
+const zOf = y => (y - Z_BASE_Y) * Z_TILT;
+
+const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+
+// ===================== スプライト (ピクセルアート) =====================
+const SPR = {
+  squid: [
+    ["...XX...","..XXXX..",".XXXXXX.","XX.XX.XX","XXXXXXXX","..X..X..",".X.XX.X.","X.X..X.X"],
+    ["...XX...","..XXXX..",".XXXXXX.","XX.XX.XX","XXXXXXXX",".X.XX.X.","X......X",".X....X."]
+  ],
+  crab: [
+    ["..X.....X..","...X...X...","..XXXXXXX..",".XX.XXX.XX.","XXXXXXXXXXX","X.XXXXXXX.X","X.X.....X.X","...XX.XX..."],
+    ["..X.....X..","X..X...X..X","X.XXXXXXX.X","XXX.XXX.XXX","XXXXXXXXXXX",".XXXXXXXXX.","..X.....X..",".X.......X."]
+  ],
+  octopus: [
+    ["....XXXX....",".XXXXXXXXXX.","XXXXXXXXXXXX","XXX..XX..XXX","XXXXXXXXXXXX","..XX.XX.XX..",".XX.XXXX.XX.","XX..X..X..XX"],
+    ["....XXXX....",".XXXXXXXXXX.","XXXXXXXXXXXX","XXX..XX..XXX","XXXXXXXXXXXX","...XX..XX...","..XX.XX.XX..","XX........XX"]
+  ]
+};
+const PLAYER_SPR = [
+  "......X......",
+  ".....XXX.....",
+  ".....XXX.....",
+  ".XXXXXXXXXXX.",
+  "XXXXXXXXXXXXX",
+  "XXXXXXXXXXXXX",
+  "XXXXXXXXXXXXX",
+  "XXX.......XXX"
+];
+const UFO_SPR = [
+  ".....XXXXXX.....",
+  "...XXXXXXXXXX...",
+  "..XXXXXXXXXXXX..",
+  ".XX.XX.XX.XX.XX.",
+  "XXXXXXXXXXXXXXXX",
+  "..XXX..XX..XXX..",
+  "...X........X..."
+];
+const BOOM_SPR = [
+  ".X..X...X..X.",
+  "..X..X.X..X..",
+  "...X.....X...",
+  "XX.........XX",
+  "...X.....X...",
+  "..X..X.X..X..",
+  ".X..X...X..X."
+];
+const BOMB_SPR = [
+  ["X.X",".X.","X.X",".X.","X.X"],
+  [".X.","X.X",".X.","X.X",".X."]
+];
+// 5x7 ドットフォント (UFO 破壊時の得点表示用)
+const DIGIT_SPR = [
+  [".XXX.","X...X","X..XX","X.X.X","XX..X","X...X",".XXX."],
+  ["..X..",".XX..","..X..","..X..","..X..","..X..",".XXX."],
+  [".XXX.","X...X","....X","...X.","..X..",".X...","XXXXX"],
+  ["XXXXX","...X.","..X..","...X.","....X","X...X",".XXX."],
+  ["...X.","..XX.",".X.X.","X..X.","XXXXX","...X.","...X."],
+  ["XXXXX","X....","XXXX.","....X","....X","X...X",".XXX."],
+  ["..XX.",".X...","X....","XXXX.","X...X","X...X",".XXX."],
+  ["XXXXX","....X","...X.","..X..",".X...",".X...",".X..."],
+  [".XXX.","X...X","X...X",".XXX.","X...X","X...X",".XXX."],
+  [".XXX.","X...X","X...X",".XXXX","....X","...X.",".XX.."]
+];
+
+const ROW_TYPE = [0, 1, 1, 2, 2];
+const TYPE_INFO = [
+  { key: 'squid',   points: 30, color: [0.39, 0.90, 1.00] },  // #63e6ff
+  { key: 'crab',    points: 20, color: [0.49, 0.91, 0.53] },  // #7ee787
+  { key: 'octo',    points: 10, color: [0.78, 0.57, 0.92] }   // #c792ea
+];
+const UFO_COLOR = [1, 0.37, 0.43];             // #ff5e6b
+const PX = 3;                                  // スプライトのピクセル倍率(2D座標系)
+
+// ===================== 行列ユーティリティ =====================
+const m4 = {
+  perspective(out, fovy, aspect, near, far) {
+    const f = 1 / Math.tan(fovy / 2);
+    out[0]=f/aspect; out[1]=0; out[2]=0; out[3]=0;
+    out[4]=0; out[5]=f; out[6]=0; out[7]=0;
+    out[8]=0; out[9]=0; out[10]=(far+near)/(near-far); out[11]=-1;
+    out[12]=0; out[13]=0; out[14]=(2*far*near)/(near-far); out[15]=0;
+    return out;
+  },
+  lookAt(out, eye, center, up) {
+    let z0=eye[0]-center[0], z1=eye[1]-center[1], z2=eye[2]-center[2];
+    let len = Math.hypot(z0,z1,z2) || 1; len = 1/len; z0*=len; z1*=len; z2*=len;
+    let x0=up[1]*z2-up[2]*z1, x1=up[2]*z0-up[0]*z2, x2=up[0]*z1-up[1]*z0;
+    len = Math.hypot(x0,x1,x2);
+    if (!len) { x0=1; x1=0; x2=0; } else { len=1/len; x0*=len; x1*=len; x2*=len; }
+    const y0=z1*x2-z2*x1, y1=z2*x0-z0*x2, y2=z0*x1-z1*x0;
+    out[0]=x0; out[1]=y0; out[2]=z0; out[3]=0;
+    out[4]=x1; out[5]=y1; out[6]=z1; out[7]=0;
+    out[8]=x2; out[9]=y2; out[10]=z2; out[11]=0;
+    out[12]=-(x0*eye[0]+x1*eye[1]+x2*eye[2]);
+    out[13]=-(y0*eye[0]+y1*eye[1]+y2*eye[2]);
+    out[14]=-(z0*eye[0]+z1*eye[1]+z2*eye[2]);
+    out[15]=1;
+    return out;
+  },
+  multiply(out, a, b) {
+    for (let c = 0; c < 4; c++) {
+      const b0=b[c*4], b1=b[c*4+1], b2=b[c*4+2], b3=b[c*4+3];
+      out[c*4+0] = a[0]*b0 + a[4]*b1 + a[8]*b2  + a[12]*b3;
+      out[c*4+1] = a[1]*b0 + a[5]*b1 + a[9]*b2  + a[13]*b3;
+      out[c*4+2] = a[2]*b0 + a[6]*b1 + a[10]*b2 + a[14]*b3;
+      out[c*4+3] = a[3]*b0 + a[7]*b1 + a[11]*b2 + a[15]*b3;
+    }
+    return out;
+  }
+};
+
+// ===================== アトラステクスチャ =====================
+const ATLAS_SIZE = 256, ACELL = 32, APAD = 2, ACOLS = 8;
+const TEX = {};
+const SPR_SRC = {};
+let atlasCanvas = null;
+
+function buildAtlas() {
+  const cv = document.createElement('canvas');
+  cv.width = ATLAS_SIZE; cv.height = ATLAS_SIZE;
+  const c = cv.getContext('2d');
+  c.clearRect(0, 0, ATLAS_SIZE, ATLAS_SIZE);
+  let idx = 0;
+
+  function add(name, spr) {
+    const col = idx % ACOLS, row = Math.floor(idx / ACOLS); idx++;
+    const px = col * ACELL + APAD, py = row * ACELL + APAD;
+    c.fillStyle = '#ffffff';
+    for (let r = 0; r < spr.length; r++)
+      for (let q = 0; q < spr[r].length; q++)
+        if (spr[r].charCodeAt(q) === 88) c.fillRect(px + q, py + r, 1, 1);
+    TEX[name] = {
+      u0: px / ATLAS_SIZE, v0: py / ATLAS_SIZE,
+      u1: (px + spr[0].length) / ATLAS_SIZE, v1: (py + spr.length) / ATLAS_SIZE,
+      w: spr[0].length, h: spr.length
+    };
+    SPR_SRC[name] = spr;
+  }
+  add('squid0', SPR.squid[0]); add('squid1', SPR.squid[1]);
+  add('crab0', SPR.crab[0]);   add('crab1', SPR.crab[1]);
+  add('octo0', SPR.octopus[0]);add('octo1', SPR.octopus[1]);
+  add('player', PLAYER_SPR);
+  add('ufo', UFO_SPR);
+  add('boom', BOOM_SPR);
+  add('bomb0', BOMB_SPR[0]);   add('bomb1', BOMB_SPR[1]);
+  for (let d = 0; d < 10; d++) add('d' + d, DIGIT_SPR[d]);
+
+  const col = idx % ACOLS, row = Math.floor(idx / ACOLS);
+  const px = col * ACELL + APAD, py = row * ACELL + APAD;
+  c.fillStyle = '#ffffff'; c.fillRect(px, py, 8, 8);
+  TEX.white = { u0: px/ATLAS_SIZE, v0: py/ATLAS_SIZE,
+                u1: (px+8)/ATLAS_SIZE, v1: (py+8)/ATLAS_SIZE, w: 8, h: 8 };
+  atlasCanvas = cv;
+  return cv;
+}
+
+// タイトルのスコア表に出すキャラ画像を作る (インベーダー/UFO のスプライトを実際の色で描く)
+function buildLegendSprites() {
+  const hex = c => '#' + c.map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
+  const defs = [
+    ['squid', 'squid0', TYPE_INFO[0].color],
+    ['crab',  'crab0',  TYPE_INFO[1].color],
+    ['octo',  'octo0',  TYPE_INFO[2].color],
+    ['ufo',   'ufo',    UFO_COLOR]
+  ];
+  const root = document.documentElement.style;
+  for (const [key, name, col] of defs) {
+    const spr = SPR_SRC[name];
+    if (!spr) continue;
+    const w = spr[0].length, h = spr.length;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const c = cv.getContext('2d');
+    c.fillStyle = hex(col);
+    for (let r = 0; r < h; r++)
+      for (let q = 0; q < w; q++)
+        if (spr[r].charCodeAt(q) === 88) c.fillRect(q, r, 1, 1);
+    root.setProperty('--spr-' + key, 'url(' + cv.toDataURL() + ')');
+  }
+}
+
+// ===================== WebGL 初期化 =====================
+const canvas = document.getElementById('gl');
+const stage = document.getElementById('stage');
+const gl = canvas.getContext('webgl', { antialias: true, alpha: false, depth: true })
+        || canvas.getContext('experimental-webgl', { antialias: true, alpha: false, depth: true });
+
+if (!gl) {
+  document.getElementById('ovl').className = 'show';
+  document.getElementById('ovl').innerHTML =
+    '<div class="mid2 l-red">WebGL NOT SUPPORTED</div><div class="sm">このブラウザでは WebGL を利用できません</div>';
+  return;
+}
+
+const VERT_SRC = `
+attribute vec3 aPos;
+attribute vec2 aUV;
+attribute vec4 aCol;
+uniform mat4 uMVP;
+varying vec2 vUV;
+varying vec4 vCol;
+void main() {
+  vUV = aUV;
+  vCol = aCol;
+  gl_Position = uMVP * vec4(aPos, 1.0);
+}`;
+const FRAG_SRC = `
+precision mediump float;
+uniform sampler2D uTex;
+varying vec2 vUV;
+varying vec4 vCol;
+void main() {
+  vec4 t = texture2D(uTex, vUV);
+  float a = t.a * vCol.a;
+  if (a < 0.02) discard;
+  gl_FragColor = vec4(t.rgb * vCol.rgb, a);
+}`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    throw new Error('shader: ' + gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT_SRC));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG_SRC));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
+  throw new Error('link: ' + gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+
+const A_POS = gl.getAttribLocation(prog, 'aPos');
+const A_UV  = gl.getAttribLocation(prog, 'aUV');
+const A_COL = gl.getAttribLocation(prog, 'aCol');
+const U_MVP = gl.getUniformLocation(prog, 'uMVP');
+const U_TEX = gl.getUniformLocation(prog, 'uTex');
+
+// テクスチャ
+const texture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, texture);
+gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, buildAtlas());
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+buildLegendSprites();                   // スコア表用のキャラ画像 (CSS 変数へ)
+
+// ===================== ジオメトリビルダ =====================
+const FLOATS = 9;                       // pos3 + uv2 + col4
+const MAXV = 60000;
+const dynData = new Float32Array(MAXV * FLOATS);
+const dynBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, dynBuf);
+gl.bufferData(gl.ARRAY_BUFFER, dynData.byteLength, gl.DYNAMIC_DRAW);
+
+const MAXBV = 40000;
+const bunData = new Float32Array(MAXBV * FLOATS);
+const bunBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, bunBuf);
+gl.bufferData(gl.ARRAY_BUFFER, bunData.byteLength, gl.DYNAMIC_DRAW);
+
+function writer(data) {
+  const w = { n: 0, data };
+  w.reset = () => { w.n = 0; };
+  w.vert = (x, y, z, u, v, r, g, b, a) => {
+    const o = w.n * FLOATS;
+    if (o + FLOATS > data.length) return;
+    data[o]=x; data[o+1]=y; data[o+2]=z; data[o+3]=u; data[o+4]=v;
+    data[o+5]=r; data[o+6]=g; data[o+7]=b; data[o+8]=a;
+    w.n++;
+  };
+  // 4点 + 4UV でクワッド(2三角形)
+  w.quad = (p0,p1,p2,p3, t0,t1,t2,t3, col, shade) => {
+    const r = col[0]*shade, g = col[1]*shade, b = col[2]*shade, a = col[3];
+    w.vert(p0[0],p0[1],p0[2], t0[0],t0[1], r,g,b,a);
+    w.vert(p1[0],p1[1],p1[2], t1[0],t1[1], r,g,b,a);
+    w.vert(p2[0],p2[1],p2[2], t2[0],t2[1], r,g,b,a);
+    w.vert(p0[0],p0[1],p0[2], t0[0],t0[1], r,g,b,a);
+    w.vert(p2[0],p2[1],p2[2], t2[0],t2[1], r,g,b,a);
+    w.vert(p3[0],p3[1],p3[2], t3[0],t3[1], r,g,b,a);
+  };
+  return w;
+}
+const DW = writer(dynData);
+const BW = writer(bunData);
+
+const SH = { front: 1.0, back: 0.62, side: 0.44, top: 0.78, bottom: 0.34 };
+
+// ============================================================
+//  スプライトの輪郭押し出し (extrusion)
+//  透明ピクセルには側面を作らない = 透過部分がポリゴンとして見えない
+// ============================================================
+function buildWalls(spr) {
+  const h = spr.length, w0 = spr[0].length;
+  const solid = (r, c) =>
+    r >= 0 && r < h && c >= 0 && c < w0 && spr[r].charCodeAt(c) === 88;
+  const out = [];
+
+  // 水平な辺 (上端 / 下端) : 行ごとに連続した列をまとめて1枚の壁に
+  for (let r = 0; r < h; r++) {
+    for (let k = 0; k < 2; k++) {
+      const above = k === 0, nb = above ? r - 1 : r + 1, shade = above ? SH.top : SH.bottom;
+      let c = 0;
+      while (c < w0) {
+        if (solid(r, c) && !solid(nb, c)) {
+          let c2 = c;
+          while (c2 + 1 < w0 && solid(r, c2 + 1) && !solid(nb, c2 + 1)) c2++;
+          const y = above ? r : r + 1;
+          out.push({ t: 'h', x0: c, y0: y, x1: c2 + 1, y1: y, s: shade });
+          c = c2 + 1;
+        } else c++;
+      }
+    }
+  }
+
+  // 垂直な辺 (左端 / 右端) : 列ごとに連続した行をまとめる
+  for (let c = 0; c < w0; c++) {
+    for (let k = 0; k < 2; k++) {
+      const left = k === 0, nc = left ? c - 1 : c + 1;
+      let r = 0;
+      while (r < h) {
+        if (solid(r, c) && !solid(r, nc)) {
+          let r2 = r;
+          while (r2 + 1 < h && solid(r2 + 1, c) && !solid(r2 + 1, nc)) r2++;
+          const x = left ? c : c + 1;
+          out.push({ t: 'v', x0: x, y0: r, x1: x, y1: r2 + 1, s: SH.side });
+          r = r2 + 1;
+        } else r++;
+      }
+    }
+  }
+  return out;
+}
+
+const EXT = {};
+for (const key in SPR_SRC) EXT[key] = buildWalls(SPR_SRC[key]);
+
+// スプライト面 + 側面の箱
+function pushBox(w, x0, y0, z0, x1, y1, z1, tex, col) {
+  const Wt = TEX.white;
+  const u0 = tex.u0, u1 = tex.u1, v0 = tex.v0, v1 = tex.v1;
+  // 前面 (+z)
+  w.quad([x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1],
+         [u0,v1],[u1,v1],[u1,v0],[u0,v0], col, SH.front);
+  // 背面 (-z)
+  w.quad([x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0],
+         [u0,v1],[u1,v1],[u1,v0],[u0,v0], col, SH.back);
+  // 左 (-x)
+  w.quad([x0,y0,z1],[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],
+         [Wt.u0,Wt.v1],[Wt.u1,Wt.v1],[Wt.u1,Wt.v0],[Wt.u0,Wt.v0], col, SH.side);
+  // 右 (+x)
+  w.quad([x1,y0,z0],[x1,y0,z1],[x1,y1,z1],[x1,y1,z0],
+         [Wt.u0,Wt.v1],[Wt.u1,Wt.v1],[Wt.u1,Wt.v0],[Wt.u0,Wt.v0], col, SH.side);
+  // 上 (+y)
+  w.quad([x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[x0,y1,z0],
+         [Wt.u0,Wt.v1],[Wt.u1,Wt.v1],[Wt.u1,Wt.v0],[Wt.u0,Wt.v0], col, SH.top);
+  // 下 (-y)
+  w.quad([x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1],
+         [Wt.u0,Wt.v1],[Wt.u1,Wt.v1],[Wt.u1,Wt.v0],[Wt.u0,Wt.v0], col, SH.bottom);
+}
+
+// スプライトを「輪郭だけ押し出した」立体として描く。
+// 前面/背面はスプライト(透過は discard)、側面は輪郭の辺のみ。
+function pushExtruded(w, key, x0, y0, z0, x1, y1, z1, col) {
+  const tex = TEX[key];
+  const tw = tex.w, th = tex.h;
+  const sx = c => x0 + (c / tw) * (x1 - x0);
+  const sy = r => y1 - (r / th) * (y1 - y0);
+  const Wt = TEX.white;
+
+  // 前面 (+z)
+  w.quad([x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1],
+         [tex.u0,tex.v1],[tex.u1,tex.v1],[tex.u1,tex.v0],[tex.u0,tex.v0], col, SH.front);
+  // 背面 (-z)
+  w.quad([x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0],
+         [tex.u0,tex.v1],[tex.u1,tex.v1],[tex.u1,tex.v0],[tex.u0,tex.v0], col, SH.back);
+
+  // 輪郭の側面
+  const walls = EXT[key];
+  for (let i = 0; i < walls.length; i++) {
+    const wl = walls[i];
+    if (wl.t === 'v') {
+      const X = sx(wl.x0), Ya = sy(wl.y0), Yb = sy(wl.y1);
+      w.quad([X,Ya,z0],[X,Yb,z0],[X,Yb,z1],[X,Ya,z1],
+             [Wt.u0,Wt.v1],[Wt.u1,Wt.v1],[Wt.u1,Wt.v0],[Wt.u0,Wt.v0], col, wl.s);
+    } else {
+      const Y = sy(wl.y0), Xa = sx(wl.x0), Xb = sx(wl.x1);
+      w.quad([Xa,Y,z0],[Xb,Y,z0],[Xb,Y,z1],[Xa,Y,z1],
+             [Wt.u0,Wt.v1],[Wt.u1,Wt.v1],[Wt.u1,Wt.v0],[Wt.u0,Wt.v0], col, wl.s);
+    }
+  }
+}
+
+// 常にカメラを向く板ポリ (パーティクル/星用)
+let camRight = [1,0,0], camUp = [0,1,0];function pushBillboard(w, x, y, z, hw, hh, tex, col) {
+  const u0=tex.u0,u1=tex.u1,v0=tex.v0,v1=tex.v1;
+  const rx=camRight[0]*hw, ry=camRight[1]*hw, rz=camRight[2]*hw;
+  const ux=camUp[0]*hh, uy=camUp[1]*hh, uz=camUp[2]*hh;
+  w.quad(
+    [x-rx-ux, y-ry-uy, z-rz-uz], [x+rx-ux, y+ry-uy, z+rz-uz],
+    [x+rx+ux, y+ry+uy, z+rz+uz], [x-rx+ux, y-ry+uy, z-rz+uz],
+    [u0,v1],[u1,v1],[u1,v0],[u0,v0], col, 1.0);
+}
+
+// ===================== サウンド (WebAudio) =====================
+const Sound = (() => {
+  let ac = null, master = null, muted = false;
+  function ctx() {
+    if (!ac) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ac = new AC();
+      master = ac.createGain(); master.gain.value = 0.5; master.connect(ac.destination);
+    }
+    if (ac.state === 'suspended') ac.resume();
+    return ac;
+  }
+  function tone(o) {
+    if (muted) return;
+    const a = ctx(); if (!a) return;
+    const t0 = a.currentTime + (o.delay || 0);
+    const osc = a.createOscillator(), gn = a.createGain();
+    osc.type = o.type || 'square';
+    osc.frequency.setValueAtTime(o.f, t0);
+    if (o.f2) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.f2), t0 + o.dur);
+    gn.gain.setValueAtTime(0.0001, t0);
+    gn.gain.exponentialRampToValueAtTime(o.vol || 0.18, t0 + 0.008);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + o.dur);
+    osc.connect(gn); gn.connect(master); osc.start(t0); osc.stop(t0 + o.dur + 0.02);
+  }
+  function noise(dur, vol) {
+    if (muted) return;
+    const a = ctx(); if (!a) return;
+    const n = Math.floor(a.sampleRate * dur);
+    const buf = a.createBuffer(1, n, a.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = a.createBufferSource(); src.buffer = buf;
+    const gn = a.createGain(); gn.gain.value = vol;
+    const flt = a.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = 1500;
+    src.connect(flt); flt.connect(gn); gn.connect(master); src.start();
+  }
+  const MARCH = [130.8, 116.5, 98.0, 87.3];
+  let marchNote = 0, ufoNodes = null;
+  return {
+    unlock() { ctx(); },
+    isMuted() { return muted; },
+    toggleMute() { muted = !muted; if (muted) this.ufoStop(); return muted; },
+    shoot()  { tone({ f: 900, f2: 260, dur: 0.10, vol: 0.10 }); },
+    spark()  { tone({ f: 1500, f2: 620, dur: 0.10, vol: 0.11 }); noise(0.07, 0.10); },
+    // ラスト1匹の3倍速など間隔が詰まるときは、音が重なりすぎないよう長さを合わせる
+    march()  { tone({ f: MARCH[marchNote++ & 3], dur: Math.min(0.075, Math.max(0.022, stepInterval / 1000)), vol: 0.13 }); },
+    kill()   { noise(0.22, 0.28); tone({ f: 420, f2: 90, dur: 0.18, type: 'sawtooth', vol: 0.12 }); },
+    appear() { tone({ f: 110, f2: 880, dur: 0.55, type: 'sawtooth', vol: 0.10 });
+               tone({ f: 1600, f2: 240, dur: 0.35, vol: 0.06, delay: 0.1 }); noise(0.45, 0.12); },
+    ufoHit() { tone({ f: 1200, f2: 200, dur: 0.28, vol: 0.16 }); },
+    die()    { tone({ f: 320, f2: 40, dur: 0.7, type: 'sawtooth', vol: 0.2 }); noise(0.6, 0.22); },
+    fanfare() {
+      [523,659,784,1046,1318].forEach((f,i) => tone({ f, dur: 0.22, type:'square', vol: 0.13, delay: i*0.075 }));
+      [262,330,392].forEach((f,i) => tone({ f, dur: 0.5, type:'triangle', vol: 0.09, delay: 0.38 + i*0.02 }));
+      noise(0.55, 0.13);
+    },
+    over()   { [392,330,262,196].forEach((f,i) => tone({ f, dur: 0.35, type:'triangle', vol: 0.18, delay: i*0.22 })); },
+    ufoStart() {
+      if (muted || ufoNodes) return;
+      const a = ctx(); if (!a) return;
+      const osc = a.createOscillator(), gn = a.createGain();
+      const lfo = a.createOscillator(), lg = a.createGain();
+      osc.type='square'; osc.frequency.value=620;
+      lfo.type='sine'; lfo.frequency.value=11; lg.gain.value=130;
+      lfo.connect(lg); lg.connect(osc.frequency);
+      gn.gain.value = 0.07;
+      osc.connect(gn); gn.connect(master); osc.start(); lfo.start();
+      ufoNodes = { osc, lfo, gn };
+    },
+    ufoStop() {
+      if (!ufoNodes || !ac) { ufoNodes = null; return; }
+      const { osc, lfo, gn } = ufoNodes;
+      try { gn.gain.setTargetAtTime(0, ac.currentTime, 0.03); osc.stop(ac.currentTime + 0.25); lfo.stop(ac.currentTime + 0.25); } catch (e) {}
+      ufoNodes = null;
+    }
+  };
+})();
+
+// ===================== ゲーム状態 =====================
+const ST = { TITLE:0, READY:1, PLAY:2, PAUSE:3, DYING:4, CLEAR:5, OVER:6 };
+let state, timer, score, hiScore, lives, wave;
+let player, bullet, bombs, invaders, gridX, gridY, dir, stepTimer, stepInterval, animFrame;
+let bunkers, parts, ufo, ufoTimer, bombTimer, shake, blink, elapsed;
+let stars = [], bunkerDirty = true, demoT = 0;
+
+// ---------- 放置デモ (アトラクトモード) ----------
+const DEMO_DELAY = 6.0;        // タイトル放置で自動プレイが始まるまで (秒)
+const OVER_DEMO_DELAY = 10.0;  // ゲームオーバー後、放置で自動プレイへ移るまで (秒)
+let demo = false;              // デモ再生中か (ゲーム本体は ST.PLAY のまま動かす)
+let idleT = 0;                 // 放置している時間 (タイトル / ゲームオーバー)
+let aiFire = false, aiAimT = 0, aiAim = 0;   // 自動操縦の状態
+
+// UFO の得点テーブル (原作 ROM 1D54 の15値)。得点は「撃った弾数」で決まり、
+// 23発目 (= 23 % 15 = 8) が 300 点。以降 15 発ごとに 300 が巡ってくる。
+const UFO_SCORES = [100,50,50,100,150,100,100,50,300,100,100,100,50,150,100];
+
+// 演出用の状態
+let shotCount = 0;            // 発射した弾数
+let popups = [], rings = [];  // 3D テキスト / 花火の輪
+let introT = 1;               // カメラズームイン (1 = 完了)
+let clearPulse = 0;           // ウェーブクリア時のカメラ引き
+let clearFxT = 0;             // 花火の連射タイマー
+const INTRO_DUR = 1.5, INTRO_ZOOM = 3.0;
+
+try { hiScore = parseInt(localStorage.getItem('si3_hiscore') || '0', 10) || 0; } catch (e) { hiScore = 0; }
+
+const keys = { left:false, right:false, fire:false };
+
+function makeStars() {
+  stars = [];
+  for (let i = 0; i < 260; i++) {
+    stars.push({
+      x: rand(-46, 46), y: rand(-30, 30), z: rand(-70, 26),
+      s: rand(0.05, 0.16), c: rand(0.25, 0.85), p: rand(0.5, 1)
+    });
+  }
+}
+
+function makeBunkers() {
+  const list = [];
+  const gap = (W - 4 * BUNKER_W) / 5;
+  for (let i = 0; i < 4; i++) {
+    const x = Math.round(gap + i * (BUNKER_W + gap));
+    const blocks = [];
+    for (let r = 0; r < BROWS; r++) {
+      const line = [];
+      for (let c = 0; c < BCOLS; c++) {
+        // 原作バンカーの形 (22x16): 上は段状に丸め、下中央はアーチ状にえぐる
+        let solid = 1;
+        if (r < 4 && (c < 4 - r || c >= BCOLS - (4 - r))) solid = 0;          // 上の丸み
+        if (r >= 11) {                                                       // 下のアーチ
+          const t = Math.min(4, r - 9);
+          if (Math.abs(c - (BCOLS - 1) / 2) < t) solid = 0;
+        }
+        line.push(solid);
+      }
+      blocks.push(line);
+    }
+    list.push({ x, y: BUNKER_Y, blocks });
+  }
+  return list;
+}
+
+function newGame() {
+  score = 0; lives = 3; wave = 1;
+  parts = []; bombs = []; bullet = null; ufo = null; shake = 0;
+  popups = []; rings = []; shotCount = 0;
+  clearPulse = 0; clearFxT = 0; introT = 0;   // ズームイン演出を開始
+  idleT = 0;
+  makeStars();
+  startWave();
+}
+
+// 放置デモ (アトラクトモード): タイトルで放置されると自動プレイを始める
+function startDemo() {
+  demo = true; idleT = 0;
+  keys.left = keys.right = keys.fire = false;
+  aiFire = false; aiAimT = 0; aiAim = 0;
+  Sound.ufoStop();
+  newGame();
+  syncCamBar();
+}
+// デモ中に入力があった → デモを畳んで本番を開始する
+function exitDemo() {
+  demo = false; idleT = 0;
+  keys.left = keys.right = keys.fire = false;
+  aiFire = false;
+  newGame();
+  syncCamBar();
+}
+
+// ESC: プレイを中断してタイトルへ戻る
+function quitToTitle() {
+  if (state === ST.TITLE) return;
+  if (!demo && score > hiScore) {              // 記録は残す (デモのスコアは残さない)
+    hiScore = score;
+    try { localStorage.setItem('si3_hiscore', String(hiScore)); } catch (e) {}
+  }
+  Sound.ufoStop();
+  keys.left = keys.right = keys.fire = false;
+  demo = false; idleT = 0; aiFire = false;
+  parts = []; bombs = []; bullet = null; ufo = null;
+  popups = []; rings = []; shotCount = 0;
+  introT = 1; clearPulse = 0; clearFxT = 0;
+  score = 0; lives = 3; wave = 1; shake = 0; flash = 0;
+  player = { x: (W - PLAYER_W) / 2, y: PLAYER_Y, w: PLAYER_W, h: PLAYER_H };
+  buildDemoFormation();
+  state = ST.TITLE; timer = 0; blink = 0;
+  syncOverlay();
+  syncCamBar();
+}
+
+// タイトル画面のデモ隊形
+function buildDemoFormation() {
+  invaders = []; animFrame = 0; dir = 1;
+  gridX = GRID_LEFT; gridY = GRID_TOP;
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      invaders.push(makeInvader(r, c));
+  bunkers = makeBunkers(); bunkerDirty = true;
+}
+
+// ---------- ウェーブ開始時の飛来演出 (WAVE 2 以降) ----------
+const FLY_DUR = 1.15;          // 1体あたりの飛来時間(秒)
+const FLY_MAX_DELAY = 0.30;    // 出発の時間差
+
+function makeInvader(r, c) {
+  return { row: r, col: c, type: ROW_TYPE[r], alive: true, boom: 0,
+           bx: 0, by: 0, bz: 0, fp: 1, ft: 0, fd: 0, fx: 0, fy: 0, fz: 0 };
+}
+// 飛来の進捗 (0..1) をイージングした値。到着済みなら 1
+function flyE(inv) { return inv.fp >= 1 ? 1 : 1 - Math.pow(1 - inv.fp, 3); }
+// 飛来中のフェードイン係数 (出発直後は透明)
+function flyAlpha(inv) { return Math.min(1, flyE(inv) * 1.5); }
+
+// 四方 + 前後の奥行きから、画面外/遠近の彼方に散らしてから定位置へ向かわせる
+function setupFlyIn() {
+  for (const inv of invaders) {
+    const r = invFinal(inv);
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    let sx = cx, sy = cy, fz = 0;
+    switch (randInt(0, 5)) {
+      case 0:                                            // 左から
+        sx = -130 - rand(0, 120); sy = cy + rand(-90, 90); break;
+      case 1:                                            // 右から
+        sx = W + 130 + rand(0, 120); sy = cy + rand(-90, 90); break;
+      case 2:                                            // 画面奥(上)から
+        sx = cx + rand(-120, 120); sy = -260 - rand(0, 90); break;
+      case 3:                                            // 手前(下)から
+        sx = cx + rand(-120, 120); sy = H + 170 + rand(0, 120); break;
+      case 4:                                            // 奥行き: 遠方(奥)から
+        fz = -(32 + rand(0, 24));                        // 遠く小さく現れ手前に来る
+        sx = cx + rand(-60, 60); sy = cy + rand(-120, 120); break;
+      default:                                           // 奥行き: 手前(カメラ側)から
+        fz = 16 + rand(0, 12);                           // すぐ手前から奥へ引いていく
+        sx = cx + rand(-60, 60); sy = cy + rand(-70, 70);
+    }
+    inv.fx = sx - r.x;                 // 定位置からのズレ
+    inv.fy = sy - r.y;
+    inv.fz = fz;                       // 奥行き方向のアーク
+    inv.ft = 0;
+    inv.fd = rand(0, FLY_MAX_DELAY);
+    inv.fp = 0;
+  }
+}
+
+function updateFlyIn(dt) {
+  for (const inv of invaders) {
+    if (inv.fp >= 1) continue;
+    inv.ft += dt;
+    const p = (inv.ft - inv.fd) / FLY_DUR;
+    inv.fp = p <= 0 ? 0 : (p >= 1 ? 1 : p);
+    if (inv.fp >= 1) {                 // 着地: 位置を確定して小さく弾ける
+      inv.fx = inv.fy = inv.fz = 0;
+      const r = invRect(inv), info = TYPE_INFO[inv.type];
+      explode(r.x + r.w / 2, r.y + r.h / 2,
+              [info.color[0], info.color[1], info.color[2], 1], 3, 1.3, 0.3);
+    }
+  }
+}
+
+function startWave() {
+  invaders = []; animFrame = 0; stepTimer = 0;
+  gridX = GRID_LEFT;
+  gridY = GRID_TOP + Math.min(wave - 1, 4) * 10;
+  dir = 1;
+  stepInterval = Math.max(62, 620 * (1 - (wave - 1) * 0.14));
+  bunkers = makeBunkers(); bunkerDirty = true;
+  bombs = []; bullet = null; ufo = null; ufoTimer = rand(14, 22); bombTimer = 1.05;
+
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      invaders.push(makeInvader(r, c));
+
+  player = { x: (W - PLAYER_W) / 2, y: PLAYER_Y, w: PLAYER_W, h: PLAYER_H };
+  state = ST.READY;
+  setupFlyIn();                       // 全ウェーブで四方+奥行きから飛来
+  timer = FLY_DUR + FLY_MAX_DELAY + 0.35;
+  Sound.ufoStop();
+  Sound.appear();
+  syncOverlay();
+}
+
+// ---------- ユーティリティ ----------
+function invFinal(inv) {
+  const t = TEX[TYPE_INFO[inv.type].key + '0'];
+  const w = t.w * PX, h = t.h * PX;
+  return { x: gridX + inv.col*CELL_W + (CELL_W-w)/2, y: gridY + inv.row*CELL_H + (CELL_H-h)/2, w, h };
+}
+// 飛来中はズレを足した矩形。到着後は定位置と一致する
+function invRect(inv) {
+  const r = invFinal(inv);
+  const k = 1 - flyE(inv);
+  if (k) { r.x += inv.fx * k; r.y += inv.fy * k; }
+  return r;
+}
+function aliveCount() { let n = 0; for (const i of invaders) if (i.alive) n++; return n; }
+function gridBounds() {
+  let min = Infinity, max = -Infinity;
+  for (const inv of invaders) {
+    if (!inv.alive) continue;
+    const t = TEX[TYPE_INFO[inv.type].key + '0'];
+    const off = inv.col*CELL_W + (CELL_W - t.w*PX)/2;
+    if (off < min) min = off;
+    if (off + t.w*PX > max) max = off + t.w*PX;
+  }
+  return { min, max };
+}
+function lowestInvaderBottom() {
+  let y = -Infinity;
+  for (const inv of invaders) if (inv.alive) { const r = invRect(inv); if (r.y + r.h > y) y = r.y + r.h; }
+  return y;
+}
+const hits = (a, b) => a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+
+// ---------- バンカー ----------
+// 弾の「実際の着弾セル」を進行方向から求め、そこを中心に進行方向へえぐるように破壊する。
+//  dirY : -1 = 上向き (自弾)   / +1 = 下向き (敵弾)
+//  ry   : 進行方向の破壊半径 (セル)   rx : 横方向の破壊半径 (セル)
+function bunkerHit(b, rect, dirY, ry, rx) {
+  const cx0 = Math.floor((rect.x - b.x) / BLOCK);
+  const cx1 = Math.floor((rect.x + rect.w - 1 - b.x) / BLOCK);
+  const cy0 = Math.floor((rect.y - b.y) / BLOCK);
+  const cy1 = Math.floor((rect.y + rect.h - 1 - b.y) / BLOCK);
+
+  // 重なっている固体セルを集める
+  const cells = [];
+  for (let r = cy0; r <= cy1; r++) {
+    if (r < 0 || r >= BROWS) continue;
+    for (let c = cx0; c <= cx1; c++) {
+      if (c < 0 || c >= BCOLS) continue;
+      if (b.blocks[r][c]) cells.push(r, c);
+    }
+  }
+  if (!cells.length) return false;
+
+  // 進行方向の手前側にあるセル = 着弾点。同じ行なら弾の中心列に近い方。
+  const midC = (rect.x + rect.w / 2 - b.x) / BLOCK;
+  let hr = cells[0], hc = cells[1], bestD = Infinity, bestOff = Infinity;
+  for (let i = 0; i < cells.length; i += 2) {
+    const r = cells[i], c = cells[i + 1];
+    const near = dirY < 0 ? -r : r;             // 手前ほど小さい値
+    const off  = Math.abs(c + 0.5 - midC);
+    if (near < bestD - 1e-6 || (Math.abs(near - bestD) < 1e-6 && off < bestOff)) {
+      hr = r; hc = c; bestD = near; bestOff = off;
+    }
+  }
+  // 手前側の面から進行方向へ1セル入った位置を穴の中心にする
+  const cy = hr + (dirY < 0 ? -1 : 1);
+  for (let r = cy - ry; r <= cy + ry; r++) {
+    if (r < 0 || r >= BROWS) continue;
+    for (let c = hc - rx; c <= hc + rx; c++) {
+      if (c < 0 || c >= BCOLS) continue;
+      const dr = (r - cy) / ry, dc = (c - hc) / rx;
+      if (dr * dr + dc * dc <= 1.0001) b.blocks[r][c] = 0;
+    }
+  }
+  bunkerDirty = true;
+  return true;
+}
+function invadersEatBunkers() {
+  for (const inv of invaders) {
+    if (!inv.alive) continue;
+    const r = invRect(inv);
+    if (r.y + r.h < BUNKER_Y) continue;
+    for (const b of bunkers) {
+      if (!hits(r, { x:b.x, y:b.y, w:BUNKER_W, h:BUNKER_H })) continue;
+      const cx0 = clamp(Math.floor((r.x-b.x)/BLOCK), 0, BCOLS-1);
+      const cx1 = clamp(Math.floor((r.x+r.w-1-b.x)/BLOCK), 0, BCOLS-1);
+      const cy0 = clamp(Math.floor((r.y-b.y)/BLOCK), 0, BROWS-1);
+      const cy1 = clamp(Math.floor((r.y+r.h-1-b.y)/BLOCK), 0, BROWS-1);
+      for (let rr = cy0; rr <= cy1; rr++) for (let cc = cx0; cc <= cx1; cc++) b.blocks[rr][cc] = 0;
+      bunkerDirty = true;
+    }
+  }
+}
+
+// ---------- パーティクル (3D) ----------
+// pz は平面からの追加オフセット。基準の奥行きは発生物のゲームYから自動で決まる。
+function explode(px, py, color, n, spread, power, pz) {
+  const baseZ = zOf(py) + (pz || 0);
+  for (let i = 0; i < n; i++) {
+    const th = rand(0, Math.PI*2), ph = Math.acos(rand(-1, 1)), sp = rand(0.15, 1) * spread;
+    parts.push({
+      x: toX(px), y: toY(py), z: baseZ,
+      vx: Math.sin(ph)*Math.cos(th)*sp, vy: Math.sin(ph)*Math.sin(th)*sp,
+      vz: Math.cos(ph)*sp*(power || 0.6),
+      life: rand(0.35, 0.95), max: 0.95, col: color, s: rand(0.05, 0.22)
+    });
+  }
+}
+
+// 3D ビルボードのテキスト (ドットフォント)。world 座標で指定する。
+function drawText(w, txt, x, y, z, hgt, col, a) {
+  const hw = hgt * (5 / 7) / 2;
+  const pitch = hgt * 6.2 / 7;
+  const x0 = x - (txt.length - 1) * pitch / 2;
+  const sx = (camRight[0] + camUp[0] * -1) * 0.07;
+  const sy = (camRight[1] + camUp[1] * -1) * 0.07;
+  const sz = (camRight[2] + camUp[2] * -1) * 0.07;
+  for (let pass = 0; pass < 2; pass++) {
+    const dark = pass === 0;
+    const c = dark ? [0, 0, 0, a * 0.65] : col;
+    for (let i = 0; i < txt.length; i++) {
+      const t = TEX['d' + txt[i]];
+      if (!t) continue;
+      pushBillboard(w, x0 + i * pitch + (dark ? sx : 0), y + (dark ? sy : 0), z + (dark ? sz : 0),
+                    hw, hgt / 2, t, c);
+    }
+  }
+}
+
+// 花火 (ウェーブクリア演出)
+const FW_COLS = [[0.55,0.95,1], [1,0.85,0.45], [0.80,0.60,1], [0.55,1,0.65], [1,0.55,0.62]];
+function spawnFirework() {
+  const c = FW_COLS[randInt(0, FW_COLS.length - 1)];
+  const px = rand(45, W - 45), py = rand(56, GRID_TOP + 236);
+  rings.push({ x: toX(px), y: toY(py), z: zOf(py) + 0.7, r: 0.3, s: rand(0.85, 1.3),
+               t: 0, life: rand(0.72, 1.05), col: c });
+  explode(px, py, [c[0], c[1], c[2], 1], 12, 3.6, 0.95, 0.7);
+}
+
+// ===================== カメラ =====================
+const MODES = [
+  { id:'CLASSIC',  label:'正面',   k: 6 },
+  { id:'OVERHEAD', label:'俯瞰',   k: 6 },
+  { id:'ISO',      label:'斜め',   k: 7 },
+  { id:'ORBIT',    label:'周回',   k: 12 },
+  { id:'FOLLOW',   label:'追尾',   k: 7 }
+];
+const FOV_BASE = 45 * Math.PI / 180;      // 通常の画角
+const FOV_UFO  = 58 * Math.PI / 180;      // UFO 見下ろし演出の画角 (広角)
+const cam = {
+  mode: 0, eye: [0,0,50], target: [0,0,0],
+  orbA: 0.62, orbR: 42, orbH: 21, autoOrbit: true,
+  fov: FOV_BASE, aspect: W/H, fitD: 50
+};
+let dragging = false, dragMoved = false, lastPX = 0, lastPY = 0;
+let demoCamA = 0;              // デモ中の首振り角
+let ufoCam = 0;                // UFO 見下ろし視点へのブレンド (0..1)
+let ufoCamPt = [0, 0, 0];      // 最後に見た UFO の位置 (消えた後もここから戻る)
+
+function updateFitDistance() {
+  const halfH = 19.8;
+  const dV = halfH / Math.tan(FOV_BASE / 2);
+  const halfW = 14.6;
+  const dH = halfW / (Math.tan(FOV_BASE / 2) * cam.aspect);
+  cam.fitD = Math.max(dV, dH) * 1.04;
+}
+
+// デモ中は正面を保ったままゆっくり首を振る (視認性を落とさない範囲で視点を動かす)
+const DEMO_SWAY = 0.45;        // 左右の振り幅 (rad) ≒ ±26°
+function desiredCam() {
+  let eye, tgt;
+  if (demo) {
+    const a = Math.sin(demoCamA) * DEMO_SWAY;
+    const r = 46 + Math.sin(demoCamA * 0.6) * 3;
+    const h = 19.5 + Math.sin(demoCamA * 0.45) * 2.5;
+    eye = [Math.sin(a) * r, h, Math.cos(a) * r];
+    tgt = [0, 0, -2];
+  } else {
+    const px = toX(player ? player.x + PLAYER_W/2 : W/2);
+    const py = toY(player ? player.y + PLAYER_H/2 : PLAYER_Y);
+    switch (cam.mode) {
+      case 0: eye = [0, 0, cam.fitD];     tgt = [0, 0, 0];  break;
+      case 1: eye = [0, 30, 38];          tgt = [0, 0, -4]; break;
+      case 2: eye = [32, 20, 37];         tgt = [0, 0, -2]; break;
+      case 3: eye = [Math.sin(cam.orbA)*cam.orbR, cam.orbH, Math.cos(cam.orbA)*cam.orbR]; tgt = [0, 0, 0]; break;
+      default: eye = [px*0.9, 6, cam.fitD*0.95]; tgt = [px*0.65, -1.5, -4]; break;
+    }
+  }
+  // UFO 飛来中は「UFO の真上から見下ろす」演出カメラへ寄せる
+  if (ufoCam > 0) {
+    const ux = ufoCamPt[0], uy = ufoCamPt[1], uz = ufoCamPt[2];
+    const ue = [ux * 0.95, uy + 15, uz - 26];    // UFO の少し上・奥 (手前=UFO, 奥=インベーダー)
+    const ut = [ux * 0.25, -4, -1];              // 自機側のフィールドを見下ろす
+    for (let i = 0; i < 3; i++) {
+      eye[i] += (ue[i] - eye[i]) * ufoCam;
+      tgt[i] += (ut[i] - tgt[i]) * ufoCam;
+    }
+  }
+  aimUfoIntoView(eye, tgt);                      // どの視点でも UFO を見失わない
+  return { eye, tgt };
+}
+
+// UFO が画面外に出そうなら、視線を振って必ず画面内に入れる (登場時に見失わない)
+const UFO_MARGIN = 0.82;                       // NDC でこの範囲に収める
+function aimUfoIntoView(eye, tgt, margin, blend) {
+  if (!ufo) return false;
+  if (margin === undefined) margin = UFO_MARGIN;
+  if (blend === undefined) blend = 1;
+  // 画面内に見えている部分を狙う (完全に画面外にいる間は振らない)
+  const uwx = Math.min(W - 6, Math.max(6, ufo.x + ufo.w / 2));
+  const uwy = Math.min(GROUND_Y - 6, Math.max(6, ufo.y + ufo.h / 2));
+  const u = [toX(uwx), toY(uwy), zOf(uwy)];
+
+  const ex = tgt[0] - eye[0], ey = tgt[1] - eye[1], ez = tgt[2] - eye[2];
+  const L = Math.hypot(ex, ey, ez);
+  if (L < 1e-4) return false;
+  const d = [ex / L, ey / L, ez / L];
+  let r = [-d[2], 0, d[0]];                    // カメラ右 (水平) = cross(d, up)
+  const rl = Math.hypot(r[0], r[2]);
+  if (rl < 1e-4) return false;                 // 真下/真上を向いている時は補正しない
+  r[0] /= rl; r[2] /= rl;
+  const up = [r[1]*d[2] - r[2]*d[1], r[2]*d[0] - r[0]*d[2], r[0]*d[1] - r[1]*d[0]];  // cross(r, d)
+
+  const ux = u[0] - eye[0], uy = u[1] - eye[1], uz = u[2] - eye[2];
+  const z = ux*d[0] + uy*d[1] + uz*d[2];       // 視線方向の距離
+  if (z < 1) return false;                     // カメラの後ろ/真横
+  const x = ux*r[0] + uy*r[1] + uz*r[2];
+  const y = ux*up[0] + uy*up[1] + uz*up[2];
+  const tanV = Math.tan(cam.fov / 2), tanH = tanV * cam.aspect;
+  const lx = margin * tanH * z, ly = margin * tanV * z;
+  const cx = Math.max(-lx, Math.min(lx, x));
+  const cy = Math.max(-ly, Math.min(ly, y));
+  if (cx === x && cy === y) return false;      // 既に画面内 → 何もしない
+  // 画面内ギリギリの位置へ狙い直す
+  const nd = [d[0]*z + r[0]*cx + up[0]*cy,
+              d[1]*z + r[1]*cx + up[1]*cy,
+              d[2]*z + r[2]*cx + up[2]*cy];
+  const nl = Math.hypot(nd[0], nd[1], nd[2]) || 1;
+  if (blend >= 1) {
+    for (let i = 0; i < 3; i++) tgt[i] = eye[i] + nd[i] / nl * L;
+  } else {
+    for (let i = 0; i < 3; i++) tgt[i] += (eye[i] + nd[i] / nl * L - tgt[i]) * blend;
+  }
+  return true;
+}
+
+function updateCamera(dt) {
+  if (cam.mode === 3 && cam.autoOrbit) cam.orbA += dt * 0.11;
+  if (demo) demoCamA += dt * 0.085;                            // デモはゆっくり首振り
+  if (ufo) ufoCamPt = [toX(ufo.x + ufo.w / 2), toY(ufo.y + ufo.h / 2), zOf(ufo.y + ufo.h / 2)];
+  const wantUfo = (demo && ufo) ? 1 : 0;                       // デモ中に UFO が来たら見下ろす
+  const rate = wantUfo > ufoCam ? 1.8 : 1.3;                   // 入りは早め・戻りはゆっくり
+  ufoCam += (wantUfo - ufoCam) * (1 - Math.exp(-dt * rate));
+  if (!wantUfo && ufoCam < 0.005) ufoCam = 0;
+  cam.fov = FOV_BASE + (FOV_UFO - FOV_BASE) * ufoCam;          // 演出中は少し広角に
+  const d = desiredCam();
+
+  // ウェーブクリア時の引き (なめらかに戻す)
+  clearPulse += ((state === ST.CLEAR ? 1 : 0) - clearPulse) * (1 - Math.exp(-dt * 2.6));
+
+  // 演出用の距離倍率 (クリアの引き + ゲーム開始のズームイン)
+  let k = 1 + 0.26 * clearPulse;
+  const starting = introT === 0;
+  if (introT < 1) {
+    introT = Math.min(1, introT + dt / INTRO_DUR);
+    const e = 1 - Math.pow(1 - introT, 3);            // easeOutCubic
+    k *= 1 + (INTRO_ZOOM - 1) * (1 - e);              // 遠方 → 通常距離
+  }
+  if (k !== 1) {
+    for (let i = 0; i < 3; i++) d.eye[i] = d.tgt[i] + (d.eye[i] - d.tgt[i]) * k;
+  }
+
+  const t = starting ? 1 : 1 - Math.exp(-dt * MODES[cam.mode].k);
+  for (let i = 0; i < 3; i++) {
+    cam.eye[i]    += (d.eye[i] - cam.eye[i]) * t;
+    cam.target[i] += (d.tgt[i] - cam.target[i]) * t;
+  }
+  // 追従が遅れても UFO が画面外に残らないよう仕上げの補正 (数フレームで収束)
+  aimUfoIntoView(cam.eye, cam.target, 0.97, 0.5);
+}
+
+function setMode(m) {
+  if (m === cam.mode && m === 3) { cam.autoOrbit = !cam.autoOrbit; syncCamBar(); return; }
+  cam.mode = m;
+  if (m === 3) cam.autoOrbit = true;
+  syncCamBar();
+}
+
+// ===================== 入力 =====================
+function fire() {
+  if (state !== ST.PLAY || bullet) return;
+  bullet = { x: player.x + PLAYER_W/2 - 1.5, y: player.y - 12, w: 3, h: 14, vy: -BULLET_SPEED };
+  shotCount++;
+  Sound.shoot();
+}
+function togglePause() {
+  if (demo) return;                      // デモ中は一時停止させない
+  if (state === ST.PLAY) { state = ST.PAUSE; syncOverlay(); }
+  else if (state === ST.PAUSE) { state = ST.PLAY; syncOverlay(); }
+}
+function pressAction() {
+  Sound.unlock();
+  idleT = 0;
+  if (demo) exitDemo();                  // デモ中 → 本番開始
+  else if (state === ST.TITLE || state === ST.OVER) newGame();
+  else if (state === ST.PLAY) fire();
+}
+
+window.addEventListener('keydown', e => {
+  Sound.unlock();
+  idleT = 0;                              // 操作したら放置タイマーを戻す
+  const k = e.key;
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(k)) e.preventDefault();
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A') keys.left = true;
+  if (k === 'ArrowRight' || k === 'd' || k === 'D') keys.right = true;
+  if (k === ' ' || k === 'Enter') {
+    if (demo) exitDemo();
+    else if (state === ST.TITLE || state === ST.OVER) newGame();
+    else if (state === ST.PLAY) { if (!keys.fire) fire(); keys.fire = true; }
+  }
+  if (k === 'p' || k === 'P') togglePause();
+  if (k === 'Escape') { e.preventDefault(); quitToTitle(); return; }
+  if (k === 'm' || k === 'M') { Sound.toggleMute(); syncHud(); }
+  if (k === 'v' || k === 'V') setMode((cam.mode + 1) % MODES.length);
+  if (k >= '1' && k <= '5') setMode(parseInt(k, 10) - 1);
+});
+window.addEventListener('keyup', e => {
+  const k = e.key;
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A') keys.left = false;
+  if (k === 'ArrowRight' || k === 'd' || k === 'D') keys.right = false;
+  if (k === ' ' || k === 'Enter') keys.fire = false;
+});
+
+// ポインタ (タップで開始 / ドラッグでカメラ操作)
+canvas.addEventListener('pointerdown', e => {
+  Sound.unlock();
+  idleT = 0;                              // 操作したら放置タイマーを戻す
+  dragging = true; dragMoved = false;
+  lastPX = e.clientX; lastPY = e.clientY;
+  canvas.classList.add('dragging');
+  try { if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId); } catch (err) {}
+});
+canvas.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastPX, dy = e.clientY - lastPY;
+  lastPX = e.clientX; lastPY = e.clientY;
+  if (Math.abs(dx) + Math.abs(dy) > 2) dragMoved = true;
+  if (dragMoved) {
+    if (cam.mode !== 3) setMode(3);
+    cam.autoOrbit = false;
+    cam.orbA -= dx * 0.007;
+    cam.orbH = clamp(cam.orbH + dy * 0.075, 1.5, 58);
+    syncCamBar();
+  }
+});
+window.addEventListener('pointerup', () => {
+  canvas.classList.remove('dragging');
+  if (dragging && !dragMoved) pressAction();
+  dragging = false;
+});
+canvas.addEventListener('wheel', e => {
+  idleT = 0;                              // 操作したら放置タイマーを戻す
+  if (cam.mode !== 3) setMode(3);
+  cam.autoOrbit = false;
+  e.preventDefault();
+  cam.orbR = clamp(cam.orbR + e.deltaY * 0.03, 20, 120);
+  syncCamBar();
+}, { passive: false });
+
+// タッチパッド
+function bindHold(el, on, off) {
+  const s = e => { e.preventDefault(); el.classList.add('on'); on(); };
+  const t = e => { e.preventDefault(); el.classList.remove('on'); if (off) off(); };
+  el.addEventListener('pointerdown', s);
+  el.addEventListener('pointerup', t);
+  el.addEventListener('pointercancel', t);
+  el.addEventListener('pointerleave', t);
+}
+bindHold(document.getElementById('bl'), () => { Sound.unlock(); keys.left = true; }, () => keys.left = false);
+bindHold(document.getElementById('br'), () => { Sound.unlock(); keys.right = true; }, () => keys.right = false);
+bindHold(document.getElementById('bf'), () => { Sound.unlock(); pressAction(); keys.fire = true; }, () => keys.fire = false);
+document.getElementById('bc').addEventListener('pointerdown', e => { e.preventDefault(); Sound.unlock(); idleT = 0; setMode((cam.mode + 1) % MODES.length); });
+document.getElementById('bp').addEventListener('pointerdown', e => {
+  e.preventDefault(); Sound.unlock(); idleT = 0;
+  if (demo) exitDemo();
+  else if (state === ST.TITLE || state === ST.OVER) newGame();
+  else togglePause();
+});
+
+// タッチ端末の判定。パッドを表示し、その分だけステージを縮める (.touch を body に付ける)。
+function isTouchDevice() {
+  let supported = false, coarse = false, noHover = false;
+  try {
+    coarse = matchMedia('(pointer:coarse)').matches;
+    noHover = matchMedia('(hover:none)').matches;
+    supported = matchMedia('(pointer:coarse)').media !== 'not all';   // メディアクエリ非対応なら false
+  } catch (e) {}
+  if (coarse) return true;                                   // 主な入力がタッチ
+  if (noHover && 'ontouchstart' in window) return true;
+  if (!supported) return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  return false;                                              // マウス併用機は実際に触れてからパッドを出す
+}
+let booted = false;                       // boot() 完了前は syncOverlay() を呼べない (ovl 未初期化)
+function markTouch() {
+  if (document.body.classList.contains('touch')) return;
+  document.body.classList.add('touch');
+  if (booted) syncOverlay();              // 操作説明をタッチ用に切り替える
+}
+if (isTouchDevice()) markTouch();
+window.addEventListener('touchstart', () => markTouch(), { passive: true });
+window.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') markTouch(); });
+
+// ===================== 放置デモの自動操縦 =====================
+// 自機の中心 x をどこに置けば弾(幅3)が上まで抜けられるか、その範囲を列挙する。
+// 邪魔になるのは (1)インベーダーの列 (2)まだ削れていないバンカー。通り道は限られている。
+function bulletLanes() {
+  const sp = [];
+  for (const inv of invaders) {                    // インベーダーの列
+    if (!inv.alive) continue;
+    const r = invRect(inv);
+    sp.push([r.x, r.x + r.w]);
+  }
+  for (const bk of bunkers) {                      // バンカー (少しでも欠けずに残る列は通れない)
+    for (let c = 0; c < BCOLS; c++) {
+      let solid = false;
+      for (let r = 0; r < BROWS; r++) if (bk.blocks[r][c]) { solid = true; break; }
+      if (solid) sp.push([bk.x + c * BLOCK, bk.x + (c + 1) * BLOCK]);
+    }
+  }
+  sp.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const s of sp) {
+    const m = merged[merged.length - 1];
+    if (m && s[0] <= m[1]) { if (s[1] > m[1]) m[1] = s[1]; }
+    else merged.push([s[0], s[1]]);
+  }
+  const lo0 = FIELD_PAD + PLAYER_W / 2, hi0 = W - FIELD_PAD - PLAYER_W / 2;   // 自機中心の可動域
+  const lanes = [];
+  let right = -1e9;
+  for (const m of merged) {
+    const a = Math.max(right + 1.5, lo0), b = Math.min(m[0] - 1.5, hi0);
+    if (b - a > 0.5) lanes.push([a, b]);
+    right = m[1];
+  }
+  const a = Math.max(right + 1.5, lo0);
+  if (hi0 - a > 0.5) lanes.push([a, hi0]);
+  return lanes;
+}
+
+// 敵弾を避けつつ、手前(危ない)のインベーダーを狙う。完璧ではないのでいつか沈む
+function updateAI(dt) {
+  const cx = player.x + PLAYER_W / 2;
+  const minX = FIELD_PAD, maxX = W - FIELD_PAD - PLAYER_W;
+  keys.left = keys.right = false;
+  aiFire = false;
+  aiAimT -= dt;
+  if (aiAimT <= 0) { aiAimT = rand(0.45, 1.5); aiAim = rand(-7, 7); }   // 狙いのブレ
+
+  // 1) 自分の進路に落ちてくる敵弾から横へ逃げる
+  //    複数の弾と壁を考慮して、着弾までに一番安全な向きを選ぶ
+  let near = null, nd = 1e9;
+  const danger = [];
+  for (const b of bombs) {
+    const bx = b.x + b.w / 2;
+    const gapY = player.y - (b.y + b.h);
+    if (gapY < -26 || gapY > 190) continue;      // 通り過ぎ / まだ余裕がある
+    danger.push(bx);
+    if (Math.abs(bx - cx) <= 34 && gapY < nd) { nd = gapY; near = b; }
+  }
+  if (near) {
+    const t = Math.max(0.12, nd / 200);          // 着弾までの時間
+    const travel = PLAYER_SPEED * t * 0.9;       // その間に動ける距離 (余裕を見る)
+    let bd = 1, bs2 = -1;
+    for (let d = -1; d <= 1; d += 2) {
+      let nx = clamp(cx + d * travel, minX + PLAYER_W / 2, maxX + PLAYER_W / 2);
+      let m = 1e9;
+      for (const bx of danger) m = Math.min(m, Math.abs(nx - bx));
+      if (m > bs2) { bs2 = m; bd = d; }
+    }
+    if (bd < 0) keys.left = true; else keys.right = true;
+    return;                                      // 回避中は撃たない
+  }
+
+  // 2) UFO が出ていれば真っ先に狙う。
+  //    弾はインベーダーの列や残ったバンカーに阻まれ、通り抜けられる場所は限られている。
+  //    「UFO がこれから通る通り道」のうち、一番早く成立する所へ先回りして待ち、来た瞬間に撃つ。
+  let aimX = null, fireX = null, lanes = null;
+  if (ufo) {
+    const flyT = Math.max(0, (player.y - (ufo.y + ufo.h / 2)) / BULLET_SPEED);
+    const lead = ufo.x + ufo.w / 2 + ufo.vx * flyT;      // 着弾予測位置
+    const exitIn = ufo.vx === 0 ? 1e9 : (ufo.vx > 0 ? W - ufo.x : ufo.x + ufo.w);   // 画面外へ抜けるまで
+    if (lead > FIELD_PAD + 4 && lead < W - FIELD_PAD - 4 && exitIn > 120) {
+      lanes = bulletLanes();
+      const dir = ufo.vx >= 0 ? 1 : -1, spd = Math.abs(ufo.vx);
+      let wait = 1e9;
+      for (const [a, b] of lanes) {
+        const gx = clamp(lead, a + 0.15, b - 0.15);          // ここに立てば当たる
+        const ahead = (gx - lead) * dir;                     // 正なら UFO がこれから来る
+        if (ahead < -3) continue;                            // もう通り過ぎた
+        const tReach = Math.abs(gx - cx) / PLAYER_SPEED;     // そこへ着くまで
+        const tLead = spd < 1 ? 0 : ahead / spd;             // UFO がそこへ来るまで
+        const w = Math.max(tReach, tLead);
+        if (w < wait) { wait = w; aimX = gx; }
+      }
+      if (wait <= 1.1) fireX = lead;                         // 間に合う見込みがあるときだけ狙う
+      else { aimX = null; lanes = null; }
+    }
+  }
+
+  // 3) UFO を狙えないときは、手前にいる(=危ない)敵を狙う
+  if (aimX === null) {
+    let best = null, bs = 1e9;
+    for (const inv of invaders) {
+      if (!inv.alive) continue;
+      const r = invRect(inv);
+      const s = Math.abs(r.x + r.w / 2 - cx) - (r.y - GRID_TOP) * 0.35;
+      if (s < bs) { bs = s; best = r; }
+    }
+    if (!best) return;
+    aimX = best.x + best.w / 2 + aiAim;       // 敵には狙いのブレを入れる
+  }
+
+  // 4) 狙いに寄って、撃てるタイミングで発射
+  //    UFO 狙いのときは「通り道の中に居る」ことも条件にする (敵に阻まれない確実な一撃だけ放つ)
+  const dx = aimX - cx;
+  const eps = fireX === null ? 2 : 1;
+  if (dx < -eps) keys.left = true;
+  else if (dx > eps) keys.right = true;
+  else if (fireX === null) aiFire = true;
+  else if (Math.abs(fireX - cx) <= 3 && lanes.some(l => cx > l[0] && cx < l[1])) aiFire = true;
+}
+
+// ===================== 更新 =====================
+function update(dt) {
+  blink += dt; elapsed += dt;
+  shake = Math.max(0, shake - dt * 60);
+
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+    p.vy -= 1.6 * dt; p.vz *= 0.985;
+    p.life -= dt;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+
+  // 花火の輪
+  for (let i = rings.length - 1; i >= 0; i--) {
+    const r = rings[i];
+    r.t += dt; r.r += dt * 5.4 * r.s;
+    if (r.t >= r.life) rings.splice(i, 1);
+  }
+  // 得点表示 (浮き上がって消える)
+  for (let i = popups.length - 1; i >= 0; i--) {
+    const p = popups[i];
+    p.t += dt; p.y += dt * 1.15;
+    if (p.t >= p.life) popups.splice(i, 1);
+  }
+
+  if (state === ST.TITLE) {
+    demoT += dt;
+    if (demoT > 0.75) { demoT = 0; animFrame ^= 1; }
+    idleT += dt;
+    if (idleT >= DEMO_DELAY) startDemo();   // 放置されたのでデモ(自動プレイ)へ
+    return;
+  }
+  if (state === ST.READY) {
+    timer -= dt;
+    updateFlyIn(dt);
+    if (timer <= 0) { state = ST.PLAY; syncOverlay(); }
+    return;
+  }
+  if (state === ST.DYING) {
+    timer -= dt;
+    for (const inv of invaders) if (!inv.alive && inv.boom > 0) inv.boom -= dt;
+    if (timer <= 0) {
+      lives--;
+      if (lives <= 0) gameOver();
+      else { player.x = (W - PLAYER_W)/2; bullet = null; bombs = []; state = ST.PLAY; syncOverlay(); }
+    }
+    return;
+  }
+  if (state === ST.CLEAR) {
+    timer -= dt;
+    for (const inv of invaders) if (!inv.alive && inv.boom > 0) inv.boom -= dt;
+    clearFxT -= dt;                                     // 連続花火
+    if (clearFxT <= 0 && timer > 0.35) { clearFxT = 0.32; spawnFirework(); }
+    if (timer <= 0) { wave++; startWave(); }
+    return;
+  }
+  if (state === ST.OVER) {
+    idleT += dt;
+    if (idleT >= OVER_DEMO_DELAY) startDemo();   // 放置されたのでデモ(自動プレイ)へ
+    return;
+  }
+  if (state !== ST.PLAY) return;
+
+  // 自機
+  if (demo) updateAI(dt);                  // 放置デモ: 自動操縦が keys を動かす
+  let vx = 0;
+  if (keys.left) vx -= 1;
+  if (keys.right) vx += 1;
+  player.x = clamp(player.x + vx * PLAYER_SPEED * dt, FIELD_PAD, W - FIELD_PAD - PLAYER_W);
+  if ((demo ? aiFire : keys.fire) && !bullet) fire();
+
+  updateInvaders(dt);
+
+  if (bullet) { bullet.y += bullet.vy * dt; if (bullet.y + bullet.h < 40) bullet = null; }
+
+  // 敵弾
+  for (let i = bombs.length - 1; i >= 0; i--) {
+    const b = bombs[i];
+    b.y += b.vy * dt; b.t += dt;
+    if (b.y > GROUND_Y) { bombs.splice(i, 1); continue; }
+    for (const bk of bunkers) {
+      if (hits(b, { x:bk.x, y:bk.y, w:BUNKER_W, h:BUNKER_H })) {
+        if (bunkerHit(bk, b, 1, 3, 2)) { explode(b.x + b.w/2, b.y + b.h, [0.49,0.91,0.53,1], 10, 2.6); bombs.splice(i, 1); }
+        break;
+      }
+    }
+    if (bombs[i] !== b) continue;
+    if (hits(b, player)) { bombs.splice(i, 1); killPlayer(); return; }
+  }
+
+  updateUfo(dt);
+
+  // 自弾
+  if (bullet) {
+    // 敵弾と相殺する
+    for (let i = bombs.length - 1; i >= 0; i--) {
+      const b = bombs[i];
+      if (!hits(bullet, b)) continue;
+      const px = (bullet.x + bullet.w/2 + b.x + b.w/2) / 2;
+      const py = (bullet.y + bullet.h/2 + b.y + b.h/2) / 2;
+      explode(px, py, [1, 1, 0.62, 1], 16, 3.4, 0.7);
+      bombs.splice(i, 1);
+      bullet = null;
+      Sound.spark();
+      break;
+    }
+  }
+  if (bullet) {
+    for (const bk of bunkers) {
+      if (hits(bullet, { x:bk.x, y:bk.y, w:BUNKER_W, h:BUNKER_H })) {
+        if (bunkerHit(bk, bullet, -1, 3, 1)) { bullet = null; break; }
+      }
+    }
+    if (bullet && ufo && hits(bullet, ufo)) {
+      // 原作と同じ: 撃った弾数で決まるテーブル (23発目で 300 点)
+      const pts = UFO_SCORES[shotCount % UFO_SCORES.length];
+      score += pts;
+      const cx = ufo.x + ufo.w/2, cy = ufo.y + ufo.h/2;
+      explode(cx, cy, [1, 0.82, 0.4, 1], 32, 5.2, 1.1);
+      // 得点を UFO の位置に表示 (原作同様、少し浮き上がって消える)
+      popups.push({ x: toX(cx), y: toY(cy) + 0.75, z: zOf(cy) + 0.55,
+                    text: String(pts), col: [1, 0.94, 0.55, 1], t: 0, life: 1.35 });
+      Sound.ufoHit(); Sound.ufoStop();
+      ufo = null; bullet = null; shake = 7;
+    }
+    if (bullet) {
+      for (const inv of invaders) {
+        if (!inv.alive) continue;
+        if (hits(bullet, invRect(inv))) {
+          const r = invRect(inv), info = TYPE_INFO[inv.type];
+          inv.alive = false; inv.boom = 0.24;
+          inv.bx = r.x + r.w/2; inv.by = r.y + r.h/2; inv.bz = zOf(inv.by);
+          score += info.points;
+          explode(inv.bx, inv.by, [info.color[0], info.color[1], info.color[2], 1], 14, 3.4);
+          Sound.kill(); bullet = null; shake = Math.max(shake, 3);
+          break;
+        }
+      }
+    }
+  }
+
+  if (aliveCount() === 0) {
+    Sound.ufoStop();
+    state = ST.CLEAR; timer = 2.6; syncOverlay();
+    Sound.fanfare();
+    setFlash('#8bffd0', 1); shake = 13;
+    popups = []; rings = [];
+    for (let i = 0; i < 6; i++) spawnFirework();
+    clearFxT = 0.32;
+    return;
+  }
+
+  bombTimer -= dt;
+  if (bombTimer <= 0) {
+    spawnBomb();
+    bombTimer = Math.max(0.24, 1.05 - (wave - 1) * 0.09) * rand(0.6, 1.5);
+  }
+
+  if (!demo && score > hiScore) { hiScore = score; try { localStorage.setItem('si3_hiscore', String(hiScore)); } catch (e) {} }
+}
+
+function updateInvaders(dt) {
+  const n = aliveCount();
+  if (n === 0) return;
+  for (const inv of invaders) if (!inv.alive && inv.boom > 0) inv.boom -= dt;
+
+  const ratio = n / (COLS * ROWS);
+  stepInterval = Math.max(62, 620 * ratio) / (1 + (wave - 1) * 0.12);
+  if (n === 1) stepInterval /= 3;            // 最後の1匹は3倍速で動く
+  stepTimer += dt * 1000;
+  while (stepTimer >= stepInterval) {
+    stepTimer -= stepInterval;
+    stepInvaders();
+    if (state !== ST.PLAY) return;
+  }
+}
+
+function stepInvaders() {
+  const b = gridBounds();
+  if (b.min === Infinity) return;
+  const nx = gridX + dir * STEP_X;
+  if (nx + b.min < FIELD_PAD || nx + b.max > W - FIELD_PAD) { gridY += DROP_Y; dir *= -1; }
+  else gridX = nx;
+  animFrame ^= 1;
+  Sound.march();
+  invadersEatBunkers();
+  if (lowestInvaderBottom() >= PLAYER_Y) killPlayer();
+}
+
+function updateUfo(dt) {
+  if (ufo) {
+    ufo.x += ufo.vx * dt;
+    if (ufo.x > W + 12 || ufo.x + ufo.w < -12) { ufo = null; Sound.ufoStop(); }
+    return;
+  }
+  if (aliveCount() <= 3) return;
+  ufoTimer -= dt;
+  if (ufoTimer <= 0) {
+    const t = TEX.ufo, w = t.w * PX, h = t.h * PX;
+    const fromLeft = Math.random() < 0.5;
+    ufo = { w, h, y: 72, x: fromLeft ? -w : W, vx: (fromLeft ? 1 : -1) * rand(95, 150) };
+    ufoTimer = rand(16, 28);
+    Sound.ufoStart();
+  }
+}
+
+function spawnBomb() {
+  if (bombs.length >= MAX_BOMBS || aliveCount() === 0) return;
+  const byCol = new Map();
+  for (const inv of invaders) {
+    if (!inv.alive) continue;
+    const cur = byCol.get(inv.col);
+    if (!cur || inv.row > cur.row) byCol.set(inv.col, inv);
+  }
+  const list = [...byCol.values()];
+  if (!list.length) return;
+  list.sort((a, b2) => Math.abs(invRect(a).x - player.x) - Math.abs(invRect(b2).x - player.x));
+  const pick = list[randInt(0, Math.min(list.length - 1, 3))];
+  const r = invRect(pick);
+  bombs.push({ x: r.x + r.w/2 - 4.5, y: r.y + r.h, w: 9, h: 15,
+               vy: rand(160, 200) + wave * 12, t: 0 });
+}
+
+function killPlayer() {
+  if (state !== ST.PLAY) return;
+  explode(player.x + PLAYER_W/2, player.y + PLAYER_H/2, [1, 0.42, 0.42, 1], 46, 6.0, 1.2);
+  Sound.die(); Sound.ufoStop();
+  shake = 16; setFlash('#ff3b3b', 1);
+  state = ST.DYING; timer = 1.6; bombs = []; bullet = null; ufo = null;
+  syncOverlay();
+}
+let flash = 0;
+function setFlash(htmlColor, v) {
+  flashEl.style.background = htmlColor;
+  flash = v === undefined ? 1 : v;
+}
+function gameOver() {
+  if (demo) { startDemo(); return; }        // デモは終わらせず、最初から繰り返す
+  state = ST.OVER;
+  idleT = 0;                                // ここから放置タイマー開始 (10秒でデモへ)
+  Sound.over();
+  if (score > hiScore) { hiScore = score; try { localStorage.setItem('si3_hiscore', String(hiScore)); } catch (e) {} }
+  syncHud(); syncOverlay();
+}
+
+// ===================== シーン構築 =====================
+let opaqueN = 0;
+
+// 敵1体を描く (alpha は半透明パスでのフェードイン用)
+function drawInvader(w, inv, alpha) {
+  const info = TYPE_INFO[inv.type];
+  const r = invRect(inv);
+  const x0 = toX(r.x), x1 = toX(r.x + r.w);
+  const y1 = toY(r.y), y0 = toY(r.y + r.h);
+  const e = flyE(inv);
+  const z = zOf(r.y + r.h / 2) + inv.fz * (1 - e);
+  // 厚みも 0 から立ち上げる: 飛来直後に押し出しの箱が透けて見えるのを防ぐ
+  const hz = (INV_DEPTH / 2) * e;
+  pushExtruded(w, info.key + animFrame, x0, y0, z - hz, x1, y1, z + hz,
+               [info.color[0], info.color[1], info.color[2], alpha]);
+}
+
+function buildScene() {
+  DW.reset();
+  opaqueN = 0;
+
+  // --- 不透明 ---
+
+  // 敵 (到着済みのみ。飛来中は半透明パスでフェードインさせる)
+  for (const inv of invaders) {
+    if (inv.alive) {
+      if (inv.fp >= 1) drawInvader(DW, inv, 1);
+    } else if (inv.boom > 0) {
+      const t = TEX.boom;
+      const a = clamp(inv.boom / 0.24, 0, 1);
+      const w = t.w * PX * S, h = t.h * PX * S;
+      const cx = toX(inv.bx), cy = toY(inv.by);
+      const sc = 0.85 + a * 0.35;
+      pushBillboard(DW, cx, cy, inv.bz, w/2 * sc, h/2 * sc, t, [1, 1, 1, 1]);
+    }
+  }
+
+  // バンカー (静的バッファ)
+  if (bunkerDirty) rebuildBunkers();
+
+  // 自機
+  if (state !== ST.DYING) {
+    const t = TEX.player;
+    const x0 = toX(player.x), x1 = toX(player.x + PLAYER_W);
+    const y1 = toY(player.y), y0 = toY(player.y + PLAYER_H);
+    const hz = 0.07, zc = zOf(player.y + PLAYER_H / 2);
+    pushExtruded(DW, 'player', x0, y0, zc - hz, x1, y1, zc + hz, [0.54, 1.0, 0.62, 1]);
+  }
+
+  // UFO
+  if (ufo) {
+    const x0 = toX(ufo.x), x1 = toX(ufo.x + ufo.w);
+    const y1 = toY(ufo.y), y0 = toY(ufo.y + ufo.h);
+    const zc = zOf(ufo.y + ufo.h / 2);
+    pushExtruded(DW, 'ufo', x0, y0, zc - 0.06, x1, y1, zc + 0.06, [...UFO_COLOR, 1]);
+  }
+
+  // 敵弾
+  for (const b of bombs) {
+    const key = Math.floor(b.t * 14) % 2 === 0 ? 'bomb0' : 'bomb1';
+    const x0 = toX(b.x), x1 = toX(b.x + b.w);
+    const y1 = toY(b.y), y0 = toY(b.y + b.h);
+    const zc = zOf(b.y + b.h / 2);
+    pushExtruded(DW, key, x0, y0, zc - 0.06, x1, y1, zc + 0.06, [1, 0.55, 0.82, 1]);
+  }
+
+  // 地面グリッド
+  const gy = toY(GROUND_Y);
+  const gcol = [0.10, 0.17, 0.36, 1];
+  for (let x = -20; x <= 20; x += 4) {
+    const wx = x;
+    DW.quad([wx-0.03, gy-1.6, -30],[wx+0.03, gy-1.6, -30],[wx+0.03, gy-1.6, 22],[wx-0.03, gy-1.6, 22],
+            [TEX.white.u0,TEX.white.v0],[TEX.white.u1,TEX.white.v0],
+            [TEX.white.u1,TEX.white.v0],[TEX.white.u0,TEX.white.v0], gcol, 0.9);
+  }
+  for (let z = -30; z <= 22; z += 4) {
+    DW.quad([-20, gy-1.6, z-0.03],[20, gy-1.6, z-0.03],[20, gy-1.6, z+0.03],[-20, gy-1.6, z+0.03],
+            [TEX.white.u0,TEX.white.v0],[TEX.white.u1,TEX.white.v0],
+            [TEX.white.u1,TEX.white.v0],[TEX.white.u0,TEX.white.v0], gcol, 0.9);
+  }
+
+  opaqueN = DW.n;
+
+  // --- 半透明 ---
+
+  // 飛来中の敵 (遠方/手前から現れる。到着に近づくほど不透明になる)
+  for (const inv of invaders) {
+    if (inv.alive && inv.fp < 1) drawInvader(DW, inv, flyAlpha(inv));
+  }
+  // 星
+  for (const s of stars) {
+    const tw = 0.75 + 0.25 * Math.sin(elapsed * s.p * 3 + s.x);
+    pushBillboard(DW, s.x, s.y, s.z, s.s*0.5, s.s*0.5, TEX.white,
+                  [s.c*0.7, s.c*0.8, 1.0, 0.55 * tw]);
+  }
+
+  // 自弾 (発光)
+  if (bullet) {
+    const x0 = toX(bullet.x) - 0.03, x1 = toX(bullet.x + bullet.w) + 0.03;
+    const y1 = toY(bullet.y), y0 = toY(bullet.y + bullet.h);
+    const zc = zOf(bullet.y + bullet.h / 2);
+    pushBox(DW, x0, y0, zc - 0.11, x1, y1, zc + 0.11, TEX.white, [1, 1, 1, 1]);
+    pushBillboard(DW, (x0+x1)/2, (y0+y1)/2, zc, 0.20, 0.42, TEX.white, [0.5, 0.9, 1, 0.35]);
+  }
+
+  // パーティクル
+  for (const p of parts) {
+    const a = clamp(p.life / p.max, 0, 1);
+    if (p.text) continue;
+    pushBillboard(DW, p.x, p.y, p.z, p.s, p.s, TEX.white,
+                  [p.col[0], p.col[1], p.col[2], a * 0.95]);
+  }
+
+  // 花火の輪 (ウェーブクリア)
+  for (const r of rings) {
+    const a = clamp(1 - r.t / r.life, 0, 1);
+    pushBillboard(DW, r.x, r.y, r.z, r.r, r.r, TEX.boom,
+                  [r.col[0], r.col[1], r.col[2], a * 0.8]);
+  }
+
+  // 得点表示 (UFO)
+  for (const p of popups) {
+    const a = clamp(Math.min(p.t / 0.12, (p.life - p.t) / 0.5), 0, 1);
+    const sc = 0.65 + 0.35 * Math.min(1, p.t / 0.14);
+    drawText(DW, p.text, p.x, p.y, p.z, 1.3 * sc,
+             [p.col[0], p.col[1], p.col[2], a], a);
+  }
+}
+
+function rebuildBunkers() {
+  BW.reset();
+  const green = [0.23, 0.82, 0.48, 1];
+  const bz = zOf(BUNKER_Y + BROWS * BLOCK / 2);   // ゲーム面に合わせた奥行き
+  for (const b of bunkers) {
+    for (let r = 0; r < BROWS; r++) {
+      let c = 0;
+      while (c < BCOLS) {
+        if (!b.blocks[r][c]) { c++; continue; }
+        let c2 = c;
+        while (c2 + 1 < BCOLS && b.blocks[r][c2+1]) c2++;
+        const px0 = b.x + c * BLOCK, px1 = b.x + (c2 + 1) * BLOCK;
+        const py0 = b.y + r * BLOCK, py1 = b.y + (r + 1) * BLOCK;
+        pushBox(BW, toX(px0), toY(py1), bz - 0.07, toX(px1), toY(py0), bz + 0.07, TEX.white, green);
+        c = c2 + 1;
+      }
+    }
+  }
+  bunkerDirty = false;
+  gl.bindBuffer(gl.ARRAY_BUFFER, bunBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, bunData.subarray(0, BW.n * FLOATS));
+}
+
+// ===================== 描画 =====================
+const matProj = new Float32Array(16), matView = new Float32Array(16), matVP = new Float32Array(16);
+const flashEl = document.getElementById('flash');
+
+let needResize = true;
+function resize() {
+  needResize = false;
+  const r = stage.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(2, Math.round(r.width * dpr));
+  const h = Math.max(2, Math.round(r.height * dpr));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  cam.aspect = canvas.width / canvas.height;
+  updateFitDistance();
+  stage.style.fontSize = (r.width / 560 * 16) + 'px';
+}
+window.addEventListener('resize', () => { needResize = true; });
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => { needResize = true; }).observe(stage);
+}
+
+function bindAttribs() {
+  const stride = FLOATS * 4;
+  gl.enableVertexAttribArray(A_POS);
+  gl.vertexAttribPointer(A_POS, 3, gl.FLOAT, false, stride, 0);
+  gl.enableVertexAttribArray(A_UV);
+  gl.vertexAttribPointer(A_UV, 2, gl.FLOAT, false, stride, 12);
+  gl.enableVertexAttribArray(A_COL);
+  gl.vertexAttribPointer(A_COL, 4, gl.FLOAT, false, stride, 20);
+}
+
+function render() {
+  if (needResize) resize();
+
+  // カメラ
+  const sh = shake;
+  const eye = [
+    cam.eye[0] + rand(-sh, sh) * 0.02,
+    cam.eye[1] + rand(-sh, sh) * 0.02,
+    cam.eye[2] + rand(-sh, sh) * 0.02
+  ];
+  const tgt = cam.target.slice();
+  m4.perspective(matProj, cam.fov, cam.aspect, 0.4, 400);
+  m4.lookAt(matView, eye, tgt, [0, 1, 0]);
+  m4.multiply(matVP, matProj, matView);
+
+  // ビルボード用の基底
+  camRight = [matView[0], matView[4], matView[8]];
+  camUp    = [matView[1], matView[5], matView[9]];
+
+  buildScene();
+
+  gl.clearColor(0.012, 0.016, 0.04, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(prog);
+  gl.uniformMatrix4fv(U_MVP, false, matVP);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.uniform1i(U_TEX, 0);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.disable(gl.BLEND);
+
+  // 1) バンカー (静止メッシュ)
+  if (BW.n > 0) {
+    gl.depthMask(true);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bunBuf);
+    bindAttribs();
+    gl.drawArrays(gl.TRIANGLES, 0, BW.n);
+  }
+
+  // 2) 不透明ダイナミック
+  gl.depthMask(true);
+  gl.bindBuffer(gl.ARRAY_BUFFER, dynBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, dynData.subarray(0, DW.n * FLOATS));
+  bindAttribs();
+  if (opaqueN > 0) gl.drawArrays(gl.TRIANGLES, 0, opaqueN);
+
+  // 3) 半透明
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.depthMask(false);
+  if (DW.n > opaqueN) gl.drawArrays(gl.TRIANGLES, opaqueN, DW.n - opaqueN);
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+
+  flashEl.style.opacity = String(flash * 0.22);
+}
+
+// ===================== UI (DOM) =====================
+const ovl = document.getElementById('ovl');
+const hScore = document.getElementById('hScore');
+const hHi = document.getElementById('hHi');
+const hWave = document.getElementById('hWave');
+const hLives = document.getElementById('hLives');
+const hMute = document.getElementById('hMute');
+const camBtns = document.getElementById('camBtns');
+const camName = document.getElementById('camName');
+
+MODES.forEach((m, i) => {
+  const b = document.createElement('button');
+  b.textContent = (i + 1) + ' ' + m.label;
+  b.addEventListener('click', () => setMode(i));
+  camBtns.appendChild(b);
+});
+
+function syncCamBar() {
+  [...camBtns.children].forEach((b, i) => b.className = i === cam.mode ? 'on' : '');
+  if (demo) { camName.textContent = 'DEMO CAMERA (自動) — SPACE で本編'; return; }
+  camName.textContent = cam.mode === 3 ? 'ORBIT ' + (cam.autoOrbit ? '(AUTO / ドラッグで手動)' : '(MANUAL / ホイールでズーム)')
+                                       : 'DRAG: 周回ビューへ';
+}
+function syncHud() {
+  hScore.textContent = String(score).padStart(5, '0');
+  const shownHi = demo ? Math.max(hiScore, score) : hiScore;   // デモ中も見た目は負けない
+  hHi.textContent = String(shownHi).padStart(5, '0');
+  hWave.textContent = String(wave).padStart(2, '0');
+  hMute.textContent = Sound.isMuted() ? 'MUTE' : '';
+  const n = state === ST.DYING ? lives - 1 : lives;
+  const want = state === ST.TITLE || state === ST.OVER ? 0 : Math.max(0, Math.min(n, 5));
+  if (hLives.childElementCount !== want) {
+    hLives.innerHTML = '';
+    for (let i = 0; i < want; i++) {
+      const s = document.createElement('span');
+      s.className = 'life'; s.textContent = '\u25B2';
+      hLives.appendChild(s);
+    }
+  }
+}
+function overlayHTML() {
+  const touch = document.body.classList.contains('touch');
+  switch (state) {
+    case ST.TITLE: return `
+      <div class="big l-green">SPACE</div>
+      <div class="big l-blue">INVADERS</div>
+      <div class="mid2 l-gold">3D</div>
+      <div class="pts">
+        <span class="sw t-squid"></span><span class="k l-blue">= 30 PTS</span>
+        <span class="sw t-crab"></span><span class="k l-green">= 20 PTS</span>
+        <span class="sw t-octo"></span><span class="k l-purple">= 10 PTS</span>
+        <span class="sw t-ufo"></span><span class="k l-red">= ????</span>
+      </div>
+      <div class="mid2 l-white blink" style="margin-top:1.1em">PRESS SPACE / TAP TO START</div>
+      ${touch
+        ? `<div class="sm">&#9664; &#9654; &#12304;移動&#12305;&nbsp; FIRE &#12304;発射&#12305;&nbsp; II &#12304;ポーズ&#12305;</div>
+           <div class="sm l-blue">CAM: 視点切替&nbsp;&nbsp;&nbsp;画面ドラッグ: 周回ビュー</div>`
+        : `<div class="sm">&larr; &rarr; MOVE&nbsp;&nbsp;&nbsp;SPACE FIRE&nbsp;&nbsp;&nbsp;P PAUSE&nbsp;&nbsp;&nbsp;M MUTE</div>
+           <div class="sm l-blue">V or 1-5: CAMERA&nbsp;&nbsp;&nbsp;DRAG: ORBIT VIEW&nbsp;&nbsp;&nbsp;WHEEL: ZOOM</div>
+           <div class="sm l-red">ESC: QUIT GAME</div>`}`;
+    case ST.READY: return `<div class="big l-gold">WAVE ${wave}</div><div class="mid2">GET READY</div>`;
+    case ST.PAUSE: return `<div class="big l-blue">PAUSED</div><div class="sm">${touch ? 'II で再開' : 'P / II で再開'}</div>${touch ? '' : '<div class="sm l-red">ESC でゲーム終了</div>'}`;
+    case ST.CLEAR: return `<div class="huge l-green pop">WAVE ${wave} CLEAR</div>
+      <div class="sm pop" style="animation-delay:.16s">NEXT WAVE INCOMING...</div>`;
+    case ST.OVER: return `
+      <div class="big l-red">GAME OVER</div>
+      <div class="mid2">SCORE ${String(score).padStart(5,'0')}</div>
+      <div class="sm l-gold">HI-SCORE ${String(hiScore).padStart(5,'0')}</div>
+      <div class="sm l-purple">WAVE REACHED ${wave}</div>
+      <div class="mid2 l-white blink" style="margin-top:.9em">PRESS SPACE / TAP TO RESTART</div>`;
+  }
+  return '';
+}
+function syncOverlay() {
+  if (demo) {                                  // 放置デモ中: 再開案内だけを出しておく
+    ovl.innerHTML = `<div class="mid2 l-white blink">PRESS SPACE / TAP TO RESTART</div>`;
+    ovl.className = 'show demo';
+    syncHud();
+    return;
+  }
+  const html = overlayHTML();
+  if (state === ST.TITLE || state === ST.READY || state === ST.PAUSE ||
+      state === ST.CLEAR || state === ST.OVER) {
+    ovl.innerHTML = html;
+    // 飛来演出中は背景を薄くして、飛んでくるインベーダーを見せる
+    const flying = state === ST.READY && invaders.length > 0 && invaders.some(i => i.fp < 1);
+    ovl.className = state === ST.CLEAR ? 'show clear' : (flying ? 'show ready' : 'show');
+  } else {
+    ovl.className = '';
+    ovl.innerHTML = '';
+  }
+  syncHud();
+}
+
+// ===================== メインループ =====================
+let last = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (!last) last = now;
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.05) dt = 0.05;
+
+  update(dt);
+  flash = Math.max(0, flash - dt * 3);
+  updateCamera(dt);
+  render();
+  if (state === ST.PLAY || state === ST.READY) syncHudLive();
+}
+
+let hudTick = 0;
+function syncHudLive() {
+  hudTick++;
+  if (hudTick % 6 === 0) syncHud();
+}
+
+// ===================== 起動 =====================
+function boot() {
+  state = ST.TITLE; timer = 0; blink = 0; last = 0; flash = 0; elapsed = 0; shake = 0;
+  score = 0; lives = 3; wave = 1; parts = []; bombs = []; bullet = null;
+  popups = []; rings = []; shotCount = 0; introT = 1; clearPulse = 0; clearFxT = 0;
+  demo = false; idleT = 0; aiFire = false; demoT = 0;
+  invaders = []; bunkers = []; ufo = null; ufoTimer = 20; bombTimer = 1.05;
+  player = { x: (W - PLAYER_W)/2, y: PLAYER_Y, w: PLAYER_W, h: PLAYER_H };
+  buildDemoFormation();
+  makeStars();
+  needResize = true;
+  resize();
+  syncCamBar();
+  syncOverlay();
+  booted = true;
+  requestAnimationFrame(loop);
+}
+boot();
+
+})();
+</script>
+</body>
+</html>
